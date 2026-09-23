@@ -44,10 +44,15 @@ export function CategoryEditDialog({ open, category, onClose, onSaved }: Categor
     setTargets((prev) => prev.filter((_, i) => i !== index));
 
   const pickDirectory = async (index: number) => {
+    const currentPath = targets[index]?.dir.trim() ?? '';
+    const hasValidDirectory = currentPath
+      ? await invoke<boolean>('is_valid_directory', { path: currentPath })
+      : false;
     const selected = await openDialog({
       directory: true,
       multiple: false,
       title: t('category.dir.label'),
+      ...(hasValidDirectory ? { defaultPath: currentPath } : {}),
     });
     if (typeof selected === 'string') {
       updateTarget(index, { dir: selected });

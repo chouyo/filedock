@@ -100,6 +100,7 @@ pub fn run() {
             commands::hide_main_window,
             commands::quit_app,
             commands::get_config_dir,
+            commands::is_valid_directory,
             commands::open_config_directory,
             commands::minimize_main_window,
             commands::toggle_maximize_main_window,
