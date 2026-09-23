@@ -8,8 +8,19 @@ pnpm-debug.log*
 
 # Dependencies
 node_modules
+app/node_modules/
+web/node_modules/
+
+# Build output
 dist
 dist-ssr
+app/dist/
+app/dist-ssr/
+web/dist/
+web/dist-ssr/
+web/.next/
+web/.nuxt/
+web/.output/
 
 # TypeScript build artifacts
 *.tsbuildinfo
@@ -27,6 +38,8 @@ vite.config.d.ts
 # Tauri / Rust
 src-tauri/target
 src-tauri/gen
+app/src-tauri/target/
+app/src-tauri/gen/
 
 # OS
 .DS_Store
@@ -42,6 +55,7 @@ ehthumbs.db
 
 # WebView2 fixed runtime (downloaded at build time)
 src-tauri/webview2-runtime
+app/src-tauri/webview2-runtime/
 
 # AI / Kilo session files
 session-ses_*.md
