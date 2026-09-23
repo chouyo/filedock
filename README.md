@@ -17,11 +17,18 @@ npm install
 npm run tauri dev
 ```
 
-From the repository root you can also use the PowerShell helpers in `app/scripts/`, for example:
+From the repository root you can also use the helper scripts in `app/scripts/`, for example:
 
 ```powershell
+# Windows
 ./app/scripts/dev.ps1
 ./app/scripts/build-skip.ps1
+```
+
+```bash
+# macOS
+./app/scripts/dev.sh
+./app/scripts/build-macos.sh
 ```
 
 ## Additional Documentation
