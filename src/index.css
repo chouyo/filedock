@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f6f8;
+  --bg-elevated: #ffffff;
+  --bg-card: #f9fafb;
+  --bg-input: #ffffff;
+  --bg-tooltip: #1a1d23;
+  --text-primary: #1a1d23;
+  --text-secondary: #6b7280;
+  --text-tooltip: #e6e8ec;
+  --border-color: #e5e7eb;
+  --hover-bg: #f3f4f6;
+  --selected-bg: #e8edf5;
+  --error-color: #dc2626;
+  --accent-bg: #ebf2ff;
+}
+
+.dark {
+  --bg-primary: #0f1115;
+  --bg-secondary: #151821;
+  --bg-elevated: #1a1d25;
+  --bg-card: #1a1d25;
+  --bg-input: #151821;
+  --bg-tooltip: #2a2f3a;
+  --text-primary: #e6e8ec;
+  --text-secondary: #8a91a0;
+  --text-tooltip: #e6e8ec;
+  --border-color: #232838;
+  --hover-bg: #1e2430;
+  --selected-bg: #1e2430;
+  --error-color: #ff5c5c;
+  --accent-bg: #1a2435;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', 'Noto Sans SC', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden;
+  user-select: none;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+input,
+textarea {
+  user-select: text;
+}
