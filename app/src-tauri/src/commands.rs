@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::os::windows::process::CommandExt;
 use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager, State};
@@ -202,15 +201,31 @@ pub fn open_in_explorer(path: String) -> Result<(), String> {
     if !p.exists() {
         return Err("file not found".into());
     }
-    // explorer.exe does not use the standard C-runtime command-line parser, so
-    // `arg()` would wrap the whole `/select,<path>` token in quotes and break
-    // paths that contain spaces. `raw_arg` emits the argument verbatim, and the
-    // surrounding quotes around the path make explorer handle spaces correctly.
-    std::process::Command::new("explorer")
-        .raw_arg(format!("/select,\"{}\"", path))
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+
+        // explorer.exe does not use the standard C-runtime command-line parser,
+        // so raw_arg preserves the /select,<path> syntax for paths with spaces.
+        std::process::Command::new("explorer")
+            .raw_arg(format!("/select,\"{}\"", path))
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    Err("opening a file in the system file manager is not supported on this platform".into())
 }
 
 #[tauri::command]
@@ -247,11 +262,27 @@ pub fn open_config_directory() -> Result<(), String> {
     if !dir.exists() {
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }
-    std::process::Command::new("explorer")
-        .arg(&dir)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    Err("opening the config directory is not supported on this platform".into())
 }
 
 #[tauri::command]
