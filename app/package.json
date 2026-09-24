@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "devtools": "react-devtools"
   },
   "dependencies": {
     "@crabnebula/tauri-plugin-drag": "^2.0.0",
