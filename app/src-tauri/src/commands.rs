@@ -257,6 +257,12 @@ pub fn get_config_dir() -> String {
 }
 
 #[tauri::command]
+pub fn is_valid_directory(path: String) -> bool {
+    let path = std::path::Path::new(&path);
+    path.is_dir()
+}
+
+#[tauri::command]
 pub fn open_config_directory() -> Result<(), String> {
     let dir = crate::config::app_config_dir();
     if !dir.exists() {

@@ -17,7 +17,10 @@ export function DirectoryInput({ value, onChange, onPick }: DirectoryInputProps)
       setError(null);
       return;
     }
-    const isAbsolute = /^[A-Za-z]:\\/.test(path) || path.startsWith('\\\\');
+    const isAbsolute =
+      path.startsWith('/') ||
+      /^[A-Za-z]:[\\/]/.test(path) ||
+      path.startsWith('\\\\');
     if (!isAbsolute) {
       setError(t('category.dir.notAbsolute'));
       return;
