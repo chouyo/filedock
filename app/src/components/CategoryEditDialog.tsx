@@ -111,6 +111,10 @@ export function CategoryEditDialog({ open, category, onClose, onSaved }: Categor
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={t('category.name.placeholder')}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             className="px-3 py-1.5 rounded-md border bg-surface-input border-divider text-sm text-ink focus:outline-none focus:border-accent"
           />
         </div>
@@ -161,6 +165,10 @@ export function CategoryEditDialog({ open, category, onClose, onSaved }: Categor
                 value={target.pattern}
                 onChange={(e) => updateTarget(index, { pattern: e.target.value })}
                 placeholder={t('category.pattern.placeholder')}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
                 className="px-3 py-1.5 rounded-md border bg-surface-input border-divider text-sm text-ink focus:outline-none focus:border-accent"
               />
               <label className="flex items-center gap-1.5 text-sm text-ink cursor-pointer">

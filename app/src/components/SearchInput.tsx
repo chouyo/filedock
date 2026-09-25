@@ -175,6 +175,10 @@ export function SearchInput({
         onChange={(e) => onChange(e.target.value)}
         onContextMenu={handleContextMenu}
         placeholder={placeholder}
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck={false}
         className="w-full pl-8 pr-8 py-1.5 text-sm rounded-md bg-surface-input border border-divider text-ink focus:outline-none focus:border-accent"
       />
       {value && (

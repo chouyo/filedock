@@ -39,6 +39,10 @@ export function DirectoryInput({ value, onChange, onPick }: DirectoryInputProps)
             validate(e.target.value);
           }}
           placeholder={t('category.dir.placeholder')}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
           className={cn(
             'flex-1 px-3 py-1.5 rounded-md border text-sm',
             'bg-surface-input border-divider text-ink',
