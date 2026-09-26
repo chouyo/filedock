@@ -47,7 +47,8 @@
         "installerHooks": "nsis/installer-hooks.nsh"
       },
       "webviewInstallMode": {
-        "type": "downloadBootstrapper"
+        "type": "downloadBootstrapper",
+        "silent": true
       }
     }
   },

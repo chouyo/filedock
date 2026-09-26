@@ -1,35 +1,20 @@
-# Build all FileDock variants by invoking each individual build script.
-# Each variant's installer is renamed with a type suffix to avoid overwriting.
+# Build all FileDock Windows variants via build-windows.ps1.
+# Each installer gets a type suffix so variants don't overwrite each other.
 #
 # Usage:
-#   .\scripts\build-all.ps1            # build all 5 variants
-#   .\scripts\build-<type>.ps1         # build a single variant (skip | download | embed | offline | fixed)
+#   .\scripts\build-all.ps1                        # build all 5 variants
+#   .\scripts\build-windows.ps1 -Type <type>       # build a single variant (skip | download | embed | offline | fixed)
 
 $ErrorActionPreference = "Stop"
-Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 
-# Each variant delegates to its own build-<type>.ps1 so behavior is shared.
-$targets = @(
-    @{ Variant = "skip";                 Script = "scripts/build-skip.ps1" },
-    @{ Variant = "downloadBootstrapper"; Script = "scripts/build-download.ps1" },
-    @{ Variant = "embedBootstrapper";   Script = "scripts/build-embed.ps1" },
-    @{ Variant = "offlineInstaller";   Script = "scripts/build-offline.ps1" },
-    @{ Variant = "fixedRuntime";        Script = "scripts/build-fixed.ps1" }
-)
-
+$types   = @("skip", "download", "embed", "offline", "fixed")
 $results = @()
 
-foreach ($t in $targets) {
-    # fixedRuntime's missing-runtime prompt must not block an all-build
-    $params = @{}
-    if ($t.Variant -eq "fixedRuntime") { $params["NoPrompt"] = $true }
-
-    & $t.Script @params
-    if ($LASTEXITCODE -eq 0) {
-        $results += [pscustomobject]@{ Variant = $t.Variant; Status = "OK" }
-    } else {
-        $results += [pscustomobject]@{ Variant = $t.Variant; Status = "FAILED" }
-    }
+foreach ($t in $types) {
+    # fixed's missing-runtime prompt must not block an all-build
+    & "$PSScriptRoot/build-windows.ps1" -Type $t -NoPrompt
+    $status = if ($LASTEXITCODE -eq 0) { "OK" } else { "FAILED" }
+    $results += [pscustomobject]@{ Type = $t; Status = $status }
 }
 
 Write-Host ""

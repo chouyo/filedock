@@ -46,19 +46,21 @@ Windows desktop application for managing file categories and their monitored dir
 
 Five WebView2 install modes are supported. All use NSIS `currentUser` install mode.
 
-| Type | Config | Script | Size | Offline | Description |
-|---|---|---|---|---|---|
-| skip | `app/src-tauri/tauri.conf.skip.json` | `app/scripts/build-skip.ps1` | ~3MB | — | Assumes WebView2 already installed; no installation step |
-| downloadBootstrapper | `app/src-tauri/tauri.conf.download.json` | `app/scripts/build-download.ps1` | ~3MB | No | Downloads bootstrapper at install time (network required) |
-| embedBootstrapper | `app/src-tauri/tauri.conf.embed.json` | `app/scripts/build-embed.ps1` | ~4MB | No | Embeds bootstrapper; downloads runtime at install time |
-| offlineInstaller | `app/src-tauri/tauri.conf.offline.json` | `app/scripts/build-offline.ps1` | ~180MB | Yes | Embeds full WebView2 offline installer |
-| fixedRuntime | `app/src-tauri/tauri.conf.fixed.json` | `app/scripts/build-fixed.ps1` | ~180MB | Yes | Bundles a fixed/pinned WebView2 runtime |
+| Type | Config | Size | Offline | Description |
+|---|---|---|---|---|
+| skip | `app/src-tauri/tauri.conf.skip.json` | ~3MB | — | Assumes WebView2 already installed; no installation step |
+| download | `app/src-tauri/tauri.conf.json` (default) | ~3MB | No | Downloads bootstrapper at install time (network required) |
+| embed | `app/src-tauri/tauri.conf.embed.json` | ~4MB | No | Embeds bootstrapper; downloads runtime at install time |
+| offline | `app/src-tauri/tauri.conf.offline.json` | ~180MB | Yes | Embeds full WebView2 offline installer |
+| fixed | `app/src-tauri/tauri.conf.fixed.json` | ~180MB | Yes | Bundles a fixed/pinned WebView2 runtime |
 
-Build any variant (run inside `app/`, or call the helper script from the repository root):
+All variants are built by `app/scripts/build-windows.ps1`, which also renames the installer with the type suffix.
+`app/scripts/build-<type>.ps1` are thin wrappers around it. CI (`.github/workflows/build.yml`) uses the same script.
+
+Build any variant (from the repository root):
 ```powershell
-cd app
-npx tauri build --config src-tauri/tauri.conf.<type>.json
-# or use the helper script from the repo root:
+./app/scripts/build-windows.ps1 -Type <type>
+# or the per-type wrapper:
 ./app/scripts/build-<type>.ps1
 ```
 
@@ -70,7 +72,7 @@ Build all variants at once:
 Installers are written to `app/src-tauri/target/release/bundle/nsis/` as
 `FileDock_<version>_x64-setup-<type>.exe` (e.g. `FileDock_1.0.0_x64-setup-skip.exe`).
 
-### fixedRuntime prerequisites
+### fixed prerequisites
 1. Download fixed WebView2 runtime `.cab` from Microsoft.
 2. Extract to `app/src-tauri/webview2-runtime/`.
 3. Build via `app/scripts/build-fixed.ps1`.
