@@ -85,6 +85,7 @@ export function TitleBar({ onOpenSettings }: TitleBarProps) {
         >
           <Settings size={15} />
         </button>
+        {/* Window controls stay out of the Tab order, like native caption buttons. */}
         <button
           onMouseDown={(e) => e.stopPropagation()}
           onClick={() => {
@@ -98,6 +99,7 @@ export function TitleBar({ onOpenSettings }: TitleBarProps) {
             minimizeHover.isHovered && 'bg-hover-bg',
           )}
           aria-label="Minimize"
+          tabIndex={-1}
         >
           <Minus size={15} />
         </button>
@@ -111,6 +113,7 @@ export function TitleBar({ onOpenSettings }: TitleBarProps) {
             maximizeHover.isHovered && 'bg-hover-bg',
           )}
           aria-label="Maximize"
+          tabIndex={-1}
         >
           {isMaximized ? <Copy size={13} /> : <Square size={13} />}
         </button>
@@ -127,6 +130,7 @@ export function TitleBar({ onOpenSettings }: TitleBarProps) {
             closeHover.isHovered && 'bg-danger text-white',
           )}
           aria-label="Close"
+          tabIndex={-1}
         >
           <X size={16} />
         </button>

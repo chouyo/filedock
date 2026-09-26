@@ -31,12 +31,14 @@ export function ConfirmDialog({
         <div className="flex items-center justify-end gap-2">
           <button
             onClick={onCancel}
+            data-autofocus={danger || undefined}
             className="px-3 py-1.5 text-sm rounded-md border border-divider hover:bg-hover-bg text-ink"
           >
             {cancelText ?? t('common.cancel')}
           </button>
           <button
             onClick={onConfirm}
+            data-autofocus={!danger || undefined}
             className={
               danger
                 ? 'px-3 py-1.5 text-sm rounded-md bg-danger text-white hover:opacity-90'

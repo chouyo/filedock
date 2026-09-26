@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -55,6 +55,26 @@ export function CategoryList({
     return categories.filter((c) => c.name.toLowerCase().includes(q));
   }, [categories, searchText]);
 
+  // Roving tabindex: the list is a single Tab stop. Arrow keys move focus
+  // between categories; Enter/Space selects the focused one.
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const itemRefs = useRef(new Map<string, HTMLButtonElement>());
+  const tabStopId =
+    [focusedId, activeCategoryId].find((id) => id && filtered.some((c) => c.id === id)) ??
+    filtered[0]?.id ??
+    null;
+
+  const handleItemKeyDown = (e: React.KeyboardEvent, index: number) => {
+    let next: number | null = null;
+    if (e.key === 'ArrowDown') next = Math.min(index + 1, filtered.length - 1);
+    else if (e.key === 'ArrowUp') next = Math.max(index - 1, 0);
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = filtered.length - 1;
+    if (next === null) return;
+    e.preventDefault();
+    itemRefs.current.get(filtered[next].id)?.focus();
+  };
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -85,11 +105,18 @@ export function CategoryList({
             items={filtered.map((c) => c.id)}
             strategy={verticalListSortingStrategy}
           >
-            {filtered.map((c) => (
+            {filtered.map((c, index) => (
               <SortableCategory
                 key={c.id}
                 category={c}
                 isActive={c.id === activeCategoryId}
+                isTabStop={c.id === tabStopId}
+                itemRef={(el) => {
+                  if (el) itemRefs.current.set(c.id, el);
+                  else itemRefs.current.delete(c.id);
+                }}
+                onItemFocus={() => setFocusedId(c.id)}
+                onItemKeyDown={(e) => handleItemKeyDown(e, index)}
                 onSelect={() => onSelect(c.id)}
                 onEdit={() => onEdit(c)}
                 onDelete={() => onDelete(c.id)}
@@ -105,6 +132,10 @@ export function CategoryList({
 interface SortableCategoryProps {
   category: Category;
   isActive: boolean;
+  isTabStop: boolean;
+  itemRef: (el: HTMLButtonElement | null) => void;
+  onItemFocus: () => void;
+  onItemKeyDown: (e: React.KeyboardEvent) => void;
   onSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -113,12 +144,18 @@ interface SortableCategoryProps {
 function SortableCategory({
   category,
   isActive,
+  isTabStop,
+  itemRef,
+  onItemFocus,
+  onItemKeyDown,
   onSelect,
   onEdit,
   onDelete,
 }: SortableCategoryProps) {
+  const { t } = useI18n();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: category.id });
+  const tabIndex = isTabStop ? 0 : -1;
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -133,35 +170,49 @@ function SortableCategory({
       style={style}
       className={cn(
         'group flex items-center gap-2 px-3 py-2 cursor-pointer border-l-2 transition',
+        'has-[[data-category-item]:focus-visible]:ring-1 has-[[data-category-item]:focus-visible]:ring-inset has-[[data-category-item]:focus-visible]:ring-accent',
         isActive
           ? 'bg-selected-bg border-accent'
           : 'border-transparent hover:bg-hover-bg',
       )}
     >
+      {/* Pointer-only drag handle; no keyboard sensor is registered. */}
       <button
         {...attributes}
         {...listeners}
+        tabIndex={-1}
+        aria-hidden="true"
         className="cursor-grab text-ink-secondary opacity-0 group-hover:opacity-100"
       >
         <GripVertical size={14} />
       </button>
       <Tooltip content={category.name} className="flex-1 min-w-0">
-        <span
-          className="flex-1 min-w-0 text-sm text-ink truncate cursor-pointer"
+        <button
+          ref={itemRef}
+          data-category-item
+          tabIndex={tabIndex}
+          aria-current={isActive || undefined}
           onClick={onSelect}
+          onFocus={onItemFocus}
+          onKeyDown={onItemKeyDown}
+          className="block w-full min-w-0 text-left text-sm text-ink truncate cursor-pointer focus:outline-none"
         >
           {category.name}
-        </span>
+        </button>
       </Tooltip>
-      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100">
+      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
         <button
           onClick={onEdit}
+          tabIndex={tabIndex}
+          aria-label={t('common.edit')}
           className="p-1 rounded hover:bg-hover-bg text-ink-secondary hover:text-ink"
         >
           <Pencil size={13} />
         </button>
         <button
           onClick={onDelete}
+          tabIndex={tabIndex}
+          aria-label={t('common.delete')}
           className="p-1 rounded hover:bg-hover-bg text-ink-secondary hover:text-danger"
         >
           <Trash2 size={13} />

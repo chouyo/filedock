@@ -59,14 +59,65 @@ function DropdownSelect({
   labels: (key: string) => string;
 }) {
   const current = options.find((o) => o.value === value);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const onToggleRef = useRef(onToggle);
+  onToggleRef.current = onToggle;
+
+  const optionButtons = () =>
+    Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []);
+
+  // While open: focus the selected option, and let Escape close only the
+  // dropdown (preventDefault tells the Modal not to close as well).
+  useEffect(() => {
+    if (!open) return;
+    const buttons = optionButtons();
+    (buttons.find((b) => b.getAttribute('aria-selected') === 'true') ?? buttons[0])?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      onToggleRef.current();
+      triggerRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [open]);
+
+  const handleListKeyDown = (e: React.KeyboardEvent) => {
+    const buttons = optionButtons();
+    const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    let next: number | null = null;
+    if (e.key === 'ArrowDown') next = (i + 1) % buttons.length;
+    else if (e.key === 'ArrowUp') next = (i - 1 + buttons.length) % buttons.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = buttons.length - 1;
+    else if (e.key === 'Tab') {
+      // Close and continue tabbing from the trigger, like a native select.
+      onToggle();
+      triggerRef.current?.focus();
+      return;
+    }
+    if (next === null) return;
+    e.preventDefault();
+    buttons[next]?.focus();
+  };
 
   return (
     <div className="relative">
       <button
+        ref={triggerRef}
         onClick={(e) => {
           e.stopPropagation();
           onToggle();
         }}
+        onKeyDown={(e) => {
+          if (!open && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md border border-divider bg-surface-input text-ink hover:bg-hover-bg transition min-w-[120px] justify-between"
       >
         <span>{current ? labels(current.labelKey) : ''}</span>
@@ -75,16 +126,24 @@ function DropdownSelect({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); onToggle(); }} />
-          <div className="absolute right-0 top-full mt-1 z-50 bg-surface-elevated border border-divider rounded-lg shadow-lg py-1 min-w-[140px]">
+          <div
+            ref={listRef}
+            role="listbox"
+            onKeyDown={handleListKeyDown}
+            className="absolute right-0 top-full mt-1 z-50 bg-surface-elevated border border-divider rounded-lg shadow-lg py-1 min-w-[140px]"
+          >
             {options.map((opt) => (
               <button
                 key={opt.value}
+                role="option"
+                aria-selected={value === opt.value}
                 onClick={(e) => {
                   e.stopPropagation();
                   onSelect(opt.value);
+                  triggerRef.current?.focus();
                 }}
                 className={cn(
-                  'w-full text-left px-3 py-1.5 text-sm hover:bg-hover-bg transition',
+                  'w-full text-left px-3 py-1.5 text-sm hover:bg-hover-bg focus:bg-hover-bg focus:outline-none transition',
                   value === opt.value ? 'text-accent' : 'text-ink',
                 )}
               >

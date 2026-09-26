@@ -63,6 +63,7 @@ export function CloseDialog({ open, onClose, onConfirm }: CloseDialogProps) {
               closeHover.clearHover();
               handleAction('close');
             }}
+            data-autofocus
             {...closeHover.hoverProps}
             className={cn(
               'px-3 py-1.5 text-sm rounded-md bg-accent text-white transition',
