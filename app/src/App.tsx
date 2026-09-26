@@ -53,6 +53,9 @@ export function App() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: FileEntry } | null>(null);
 
   const loadIdRef = useRef(0);
+  const spinnerLoadIdRef = useRef(0);
+  const loadingRef = useRef(false);
+  const refreshPendingRef = useRef(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastCategoryClickRef = useRef<{ id: string; time: number }>({ id: '', time: 0 });
   const selectLoadedRef = useRef<string | null>(null);
@@ -157,10 +160,18 @@ export function App() {
   }, []);
 
   // ---- Load files when active category changes ----
+  // Only the latest load's result is applied. A silent load may supersede a
+  // visible one, so the spinner is tracked by the latest visible load.
   const loadFiles = useCallback((categoryId: string, silent = false) => {
     const currentLoadId = ++loadIdRef.current;
     const startTime = Date.now();
-    if (!silent) setInFlight(true);
+    loadingRef.current = true;
+    if (!silent) {
+      // A fresh scan covers any change a pending refresh was waiting for.
+      refreshPendingRef.current = false;
+      spinnerLoadIdRef.current = currentLoadId;
+      setInFlight(true);
+    }
     invoke<FileEntry[]>('list_files', { categoryId })
       .then((result) => {
         if (currentLoadId === loadIdRef.current) setFiles(result);
@@ -169,18 +180,39 @@ export function App() {
         if (currentLoadId === loadIdRef.current) setFiles([]);
       })
       .finally(() => {
-        if (currentLoadId !== loadIdRef.current || silent) return;
-        const elapsed = Date.now() - startTime;
-        const minDuration = 200;
-        if (elapsed >= minDuration) {
-          setInFlight(false);
-        } else {
-          setTimeout(() => {
-            if (currentLoadId === loadIdRef.current) setInFlight(false);
-          }, minDuration - elapsed);
+        if (!silent && currentLoadId === spinnerLoadIdRef.current) {
+          const elapsed = Date.now() - startTime;
+          const minDuration = 200;
+          if (elapsed >= minDuration) {
+            setInFlight(false);
+          } else {
+            setTimeout(() => {
+              if (currentLoadId === spinnerLoadIdRef.current) setInFlight(false);
+            }, minDuration - elapsed);
+          }
+        }
+        if (currentLoadId !== loadIdRef.current) return;
+        loadingRef.current = false;
+        if (refreshPendingRef.current) {
+          refreshPendingRef.current = false;
+          loadFiles(categoryId, true);
         }
       });
   }, []);
+
+  // Silent refresh for file-change events and similar triggers. While a
+  // scan is running, further requests only mark one follow-up scan, so a
+  // burst of events cannot queue up scans that are all thrown away.
+  const refreshFiles = useCallback(
+    (categoryId: string) => {
+      if (loadingRef.current) {
+        refreshPendingRef.current = true;
+        return;
+      }
+      loadFiles(categoryId, true);
+    },
+    [loadFiles],
+  );
 
   useEffect(() => {
     if (!activeCategoryId) {
@@ -198,13 +230,13 @@ export function App() {
   useEffect(() => {
     const unlisten = listen<string>('files-changed', (e) => {
       if (windowVisible && activeCategoryId && e.payload === activeCategoryId) {
-        loadFiles(activeCategoryId, true);
+        refreshFiles(activeCategoryId);
       }
     });
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, [activeCategoryId, windowVisible, loadFiles]);
+  }, [activeCategoryId, windowVisible, refreshFiles]);
 
   // ---- File-change watcher lifecycle (auto refresh) ----
   useEffect(() => {
@@ -230,11 +262,11 @@ export function App() {
   useEffect(() => {
     if (prevVisibleRef.current === false && windowVisible === true) {
       if (activeCategoryId && settings?.autoRefreshEnabled) {
-        loadFiles(activeCategoryId, true);
+        refreshFiles(activeCategoryId);
       }
     }
     prevVisibleRef.current = windowVisible;
-  }, [windowVisible, activeCategoryId, settings?.autoRefreshEnabled, loadFiles]);
+  }, [windowVisible, activeCategoryId, settings?.autoRefreshEnabled, refreshFiles]);
 
   // ---- F12 devtools shortcut (debug only) ----
   useEffect(() => {
@@ -317,7 +349,7 @@ export function App() {
     // file list immediately (silently, so the manual refresh button stays
     // usable) and restart the watcher so the new rules take effect.
     if (editingCategory && editingCategory.id === activeCategoryId) {
-      loadFiles(activeCategoryId, true);
+      refreshFiles(activeCategoryId);
       setRefreshNonce((n) => n + 1);
     }
   };
@@ -422,6 +454,11 @@ export function App() {
     setDeleteTarget(null);
   };
 
+  const handleFileContextMenu = useCallback(
+    (x: number, y: number, file: FileEntry) => setContextMenu({ x, y, file }),
+    [],
+  );
+
   // ---- Toolbar items ----
   const toolbarItems: ToolbarItem[] = [
     {
@@ -469,6 +506,7 @@ export function App() {
         <div className="flex-1 flex flex-col min-h-0">
           {activeCategoryId ? (
             <FileTable
+              categoryId={activeCategoryId}
               files={files}
               columns={columns}
               lang={lang}
@@ -479,7 +517,7 @@ export function App() {
               onClearSearch={handleClearSearch}
               onRefresh={handleManualRefresh}
               onToggleColumn={handleToggleColumn}
-              onContextMenu={(x, y, file) => setContextMenu({ x, y, file })}
+              onContextMenu={handleFileContextMenu}
               searchInputRef={fileSearchRef}
             />
           ) : (
