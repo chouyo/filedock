@@ -1,21 +1,36 @@
-import { useCallback } from 'react';
+import { memo, useCallback } from 'react';
 import { startDrag } from '@crabnebula/tauri-plugin-drag';
-import type { FileEntry, ColumnKey, Language } from '../types';
-import { getColumnDef, renderCell } from '../lib/columns';
+import type { FileEntry, Language } from '../types';
+import { renderCell, type ColumnDef } from '../lib/columns';
 import { cn } from '../lib/utils';
 import { beginInternalDrag, endInternalDrag } from '../lib/internalDrag';
 
 const DRAG_ICON =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
+/**
+ * Exact row height in px. The file table is virtualized on this value, so
+ * rows must not grow: cells are single-line and the divider is drawn with an
+ * inset shadow rather than a border.
+ */
+export const FILE_ROW_HEIGHT = 32;
+
 interface FileRowProps {
   file: FileEntry;
-  columns: ColumnKey[];
+  columns: ColumnDef[];
   lang: Language;
+  /** 1-based row index within the table, header included (for aria-rowindex). */
+  rowIndex: number;
   onContextMenu: (x: number, y: number, file: FileEntry) => void;
 }
 
-export function FileRow({ file, columns, lang, onContextMenu }: FileRowProps) {
+export const FileRow = memo(function FileRow({
+  file,
+  columns,
+  lang,
+  rowIndex,
+  onContextMenu,
+}: FileRowProps) {
   const handleDragStart = useCallback(
     async (e: React.DragEvent) => {
       e.preventDefault();
@@ -42,30 +57,29 @@ export function FileRow({ file, columns, lang, onContextMenu }: FileRowProps) {
   return (
     <tr
       draggable
+      aria-rowindex={rowIndex}
       onDragStart={handleDragStart}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
         onContextMenu(e.clientX, e.clientY, file);
       }}
-      className="border-b border-divider hover:bg-hover-bg transition cursor-grab text-sm"
+      style={{ height: FILE_ROW_HEIGHT }}
+      className="hover:bg-hover-bg transition cursor-grab text-sm"
     >
-      {columns.map((key) => {
-        const def = getColumnDef(key);
-        if (!def) return null;
-        return (
-          <td
-            key={key}
-            className={cn(
-              'px-3 py-1.5 whitespace-nowrap overflow-hidden text-ellipsis max-w-[300px]',
-              def.align === 'right' && 'text-right',
-              def.align === 'center' && 'text-center',
-            )}
-          >
-            {renderCell(file, def, lang)}
-          </td>
-        );
-      })}
+      {columns.map((def) => (
+        <td
+          key={def.key}
+          className={cn(
+            'px-3 py-0 whitespace-nowrap overflow-hidden text-ellipsis shadow-[inset_0_-1px_0_var(--border-color)]',
+            def.align === 'right' && 'text-right',
+            def.align === 'center' && 'text-center',
+          )}
+        >
+          {renderCell(file, def, lang)}
+        </td>
+      ))}
+      <td className="shadow-[inset_0_-1px_0_var(--border-color)]" />
     </tr>
   );
-}
+});

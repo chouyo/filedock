@@ -133,14 +133,21 @@ pub async fn list_files(
     };
     let _guard = lock.lock().await;
 
-    let cfg = state.config.lock().unwrap();
-    let category = cfg
-        .categories
-        .iter()
-        .find(|c| c.id == category_id)
-        .ok_or_else(|| "category not found".to_string())?;
+    // Clone the category and release the config lock before scanning. Sync
+    // commands such as `save_session` run on the main thread and take this
+    // lock, so holding it for the whole scan would freeze the window.
+    let category = {
+        let cfg = state.config.lock().unwrap();
+        cfg.categories
+            .iter()
+            .find(|c| c.id == category_id)
+            .cloned()
+            .ok_or_else(|| "category not found".to_string())?
+    };
 
-    Ok(scan::scan_category(category))
+    tauri::async_runtime::spawn_blocking(move || scan::scan_category(&category))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
