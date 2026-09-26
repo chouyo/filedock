@@ -85,6 +85,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+
             commands::load_config,
             commands::load_settings,
             commands::save_window_state,
@@ -108,6 +109,19 @@ pub fn run() {
             watch::start_file_watch,
             watch::stop_file_watch,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // On macOS, clicking the Dock icon while the window is hidden/closed
+            // fires Reopen instead of a window event; restore it manually.
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } = event
+            {
+                if !has_visible_windows {
+                    tray::show_main_window(app_handle);
+                }
+            }
+        });
 }
