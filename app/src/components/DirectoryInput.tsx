@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useI18n } from '../i18n/useI18n';
 import { cn } from '../lib/utils';
+import { useSafeHover } from '../lib/useSafeHover';
 
 interface DirectoryInputProps {
   value: string;
@@ -11,6 +12,7 @@ interface DirectoryInputProps {
 export function DirectoryInput({ value, onChange, onPick }: DirectoryInputProps) {
   const { t } = useI18n();
   const [error, setError] = useState<string | null>(null);
+  const pickHover = useSafeHover();
 
   const validate = (path: string) => {
     if (!path) {
@@ -51,8 +53,15 @@ export function DirectoryInput({ value, onChange, onPick }: DirectoryInputProps)
           )}
         />
         <button
-          onClick={onPick}
-          className="px-3 py-1.5 text-sm rounded-md border border-divider hover:bg-hover-bg whitespace-nowrap text-ink"
+          onClick={() => {
+            pickHover.clearHover();
+            onPick();
+          }}
+          {...pickHover.hoverProps}
+          className={cn(
+            'px-3 py-1.5 text-sm rounded-md border border-divider whitespace-nowrap text-ink transition',
+            pickHover.isHovered && 'bg-hover-bg',
+          )}
         >
           {t('category.dir.pick')}
         </button>

@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Minus, Square, X, Copy, Settings } from 'lucide-react';
 import { useI18n } from '../i18n/useI18n';
 import { cn } from '../lib/utils';
+import { useSafeHover } from '../lib/useSafeHover';
 import titlebarIcon from '../../src-tauri/icons/32x32.png';
 
 interface TitleBarProps {
@@ -51,6 +52,11 @@ export function TitleBar({ onOpenSettings }: TitleBarProps) {
   const handleToggleMaximize = useCallback(() => invoke('toggle_maximize_main_window'), []);
   const handleClose = useCallback(() => invoke('close_main_window'), []);
 
+  const settingsHover = useSafeHover();
+  const minimizeHover = useSafeHover();
+  const maximizeHover = useSafeHover();
+  const closeHover = useSafeHover();
+
   return (
     <div
       onMouseDown={handleDragStart}
@@ -68,10 +74,12 @@ export function TitleBar({ onOpenSettings }: TitleBarProps) {
         <button
           onMouseDown={(e) => e.stopPropagation()}
           onClick={onOpenSettings}
+          {...settingsHover.hoverProps}
           title={t('toolbar.settings')}
           className={cn(
             'flex items-center justify-center w-11 h-full',
-            'text-ink-secondary hover:bg-hover-bg transition',
+            'text-ink-secondary transition',
+            settingsHover.isHovered && 'bg-hover-bg',
           )}
           aria-label={t('toolbar.settings')}
         >
@@ -79,10 +87,15 @@ export function TitleBar({ onOpenSettings }: TitleBarProps) {
         </button>
         <button
           onMouseDown={(e) => e.stopPropagation()}
-          onClick={handleMinimize}
+          onClick={() => {
+            minimizeHover.clearHover();
+            handleMinimize();
+          }}
+          {...minimizeHover.hoverProps}
           className={cn(
             'flex items-center justify-center w-11 h-full',
-            'text-ink-secondary hover:bg-hover-bg transition',
+            'text-ink-secondary transition',
+            minimizeHover.isHovered && 'bg-hover-bg',
           )}
           aria-label="Minimize"
         >
@@ -91,9 +104,11 @@ export function TitleBar({ onOpenSettings }: TitleBarProps) {
         <button
           onMouseDown={(e) => e.stopPropagation()}
           onClick={handleToggleMaximize}
+          {...maximizeHover.hoverProps}
           className={cn(
             'flex items-center justify-center w-11 h-full',
-            'text-ink-secondary hover:bg-hover-bg transition',
+            'text-ink-secondary transition',
+            maximizeHover.isHovered && 'bg-hover-bg',
           )}
           aria-label="Maximize"
         >
@@ -101,10 +116,15 @@ export function TitleBar({ onOpenSettings }: TitleBarProps) {
         </button>
         <button
           onMouseDown={(e) => e.stopPropagation()}
-          onClick={handleClose}
+          onClick={() => {
+            closeHover.clearHover();
+            handleClose();
+          }}
+          {...closeHover.hoverProps}
           className={cn(
             'flex items-center justify-center w-11 h-full',
-            'text-ink-secondary hover:bg-danger hover:text-white transition',
+            'text-ink-secondary transition',
+            closeHover.isHovered && 'bg-danger text-white',
           )}
           aria-label="Close"
         >

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Modal } from './Modal';
 import { useI18n } from '../i18n/useI18n';
+import { useSafeHover } from '../lib/useSafeHover';
+import { cn } from '../lib/utils';
 
 interface CloseDialogProps {
   open: boolean;
@@ -11,6 +13,9 @@ interface CloseDialogProps {
 export function CloseDialog({ open, onClose, onConfirm }: CloseDialogProps) {
   const { t } = useI18n();
   const [remember, setRemember] = useState(false);
+  const cancelHover = useSafeHover();
+  const minimizeHover = useSafeHover();
+  const closeHover = useSafeHover();
 
   const handleAction = (action: 'close' | 'minimize') => {
     onConfirm(action, remember);
@@ -32,19 +37,37 @@ export function CloseDialog({ open, onClose, onConfirm }: CloseDialogProps) {
         <div className="flex items-center justify-end gap-2">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded-md border border-divider hover:bg-hover-bg text-ink"
+            {...cancelHover.hoverProps}
+            className={cn(
+              'px-3 py-1.5 text-sm rounded-md border border-divider text-ink transition',
+              cancelHover.isHovered && 'bg-hover-bg',
+            )}
           >
             {t('close.cancel')}
           </button>
           <button
-            onClick={() => handleAction('minimize')}
-            className="px-3 py-1.5 text-sm rounded-md border border-divider hover:bg-hover-bg text-ink"
+            onClick={() => {
+              minimizeHover.clearHover();
+              handleAction('minimize');
+            }}
+            {...minimizeHover.hoverProps}
+            className={cn(
+              'px-3 py-1.5 text-sm rounded-md border border-divider text-ink transition',
+              minimizeHover.isHovered && 'bg-hover-bg',
+            )}
           >
             {t('close.minimizeToTray')}
           </button>
           <button
-            onClick={() => handleAction('close')}
-            className="px-3 py-1.5 text-sm rounded-md bg-accent text-white hover:opacity-90"
+            onClick={() => {
+              closeHover.clearHover();
+              handleAction('close');
+            }}
+            {...closeHover.hoverProps}
+            className={cn(
+              'px-3 py-1.5 text-sm rounded-md bg-accent text-white transition',
+              closeHover.isHovered && 'opacity-90',
+            )}
           >
             {t('close.closeWindow')}
           </button>
