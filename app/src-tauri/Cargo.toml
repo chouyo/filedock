@@ -30,6 +30,11 @@ uuid = { version = "1", features = ["v4"] }
 notify = "6"
 tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
 
+# Versions must match the ones wry/tauri resolve to (see Cargo.lock).
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows-core = "0.61"
+
 [features]
 # This feature is used for production builds (no devtools)
 default = []

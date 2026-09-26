@@ -20,7 +20,9 @@
         "devtools": false,
         "visible": false,
         "center": true,
-        "decorations": false
+        "decorations": false,
+        "zoomHotkeysEnabled": false,
+        "generalAutofillEnabled": false
       }
     ],
     "security": {

@@ -100,4 +100,5 @@ npx tauri icon path/to/source.png
 - **Config persistence**: All changes written immediately via atomic write (temp file + rename).
 - **File scanning**: Per-category serialization via `tokio::sync::Mutex`; prevents concurrent scans of the same category.
 - **Window state**: Saved on Move/Resize with 500ms debounce; restored on startup with 4-level monitor matching.
+- **Keyboard shortcuts**: Browser default shortcuts are disabled. Release builds turn off WebView2 browser accelerator keys natively (`app/src-tauri/src/webview.rs`); `app/src/lib/shortcuts.ts` blocks every Ctrl/Cmd/Alt/F-key combination not in its `WHITELIST`. Add new shortcuts to the whitelist. Dev builds keep F5 and F12.
 - **Single instance**: Second launch focuses existing window instead of creating a new one.

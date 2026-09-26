@@ -7,6 +7,7 @@ mod settings;
 mod tray;
 mod util;
 mod watch;
+mod webview;
 mod window_state;
 
 use std::sync::Mutex;
@@ -41,6 +42,8 @@ pub fn run() {
 
             let window = app.get_webview_window("main").unwrap();
             let settings_val = settings::load_settings_file();
+
+            webview::disable_browser_accelerator_keys(&window);
 
             if let Some(ref state) = settings_val.window_state {
                 window_state::restore_window_state(&window, state);
