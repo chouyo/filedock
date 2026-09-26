@@ -16,11 +16,15 @@ import { CategoryEditDialog } from './components/CategoryEditDialog';
 import { SettingsDialog } from './components/SettingsDialog';
 import { CloseDialog } from './components/CloseDialog';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { CategoryDropOverlay } from './components/CategoryDropOverlay';
 import { DEFAULT_COLUMNS } from './lib/columns';
+import { buildDraft } from './lib/dropDraft';
+import { useCategoryDrop } from './lib/useCategoryDrop';
 import type {
   Config,
   Settings,
   Category,
+  CategoryDraft,
   FileEntry,
   ColumnKey,
   Theme,
@@ -44,6 +48,7 @@ export function App() {
   const [showQuitConfirm, setShowQuitConfirm] = useState(false);
   const [showCategoryEdit, setShowCategoryEdit] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [categoryDraft, setCategoryDraft] = useState<CategoryDraft | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: FileEntry } | null>(null);
 
@@ -52,6 +57,7 @@ export function App() {
   const lastCategoryClickRef = useRef<{ id: string; time: number }>({ id: '', time: 0 });
   const selectLoadedRef = useRef<string | null>(null);
   const fileSearchRef = useRef<HTMLInputElement>(null);
+  const categoryDropRef = useRef<HTMLDivElement>(null);
 
   const categories = useMemo(() => {
     if (!config) return [];
@@ -259,6 +265,27 @@ export function App() {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
+  // ---- Drop files/folders onto the sidebar to create a category ----
+  const openNewCategory = (draft: CategoryDraft | null = null) => {
+    setEditingCategory(null);
+    setCategoryDraft(draft);
+    setShowCategoryEdit(true);
+  };
+
+  const anyModalOpen =
+    showCategoryEdit || showSettings || showCloseDialog || showQuitConfirm || !!deleteTarget;
+
+  const categoryDrop = useCategoryDrop({
+    containerRef: categoryDropRef,
+    disabled: anyModalOpen,
+    onDrop: (infos, mode) => {
+      const draft = buildDraft(infos, mode);
+      if (draft) openNewCategory(draft);
+      else showToast(t('toast.dropUnrecognized'), 'error');
+    },
+    onUnrecognized: () => showToast(t('toast.dropUnrecognized'), 'error'),
+  });
+
   // ---- Category operations ----
   const selectCategory = (id: string) => {
     const now = Date.now();
@@ -401,10 +428,7 @@ export function App() {
       id: 'newCategory',
       icon: <Plus size={16} />,
       tooltip: t('toolbar.newCategory'),
-      onClick: () => {
-        setEditingCategory(null);
-        setShowCategoryEdit(true);
-      },
+      onClick: () => openNewCategory(),
     },
   ];
 
@@ -421,20 +445,24 @@ export function App() {
         {/* Sidebar */}
         <div className="w-60 shrink-0 flex flex-col bg-surface-secondary border-r border-divider">
           <CategoryToolbar items={toolbarItems} />
-          <CategoryList
-            categories={categories}
-            activeCategoryId={activeCategoryId}
-            searchText={categorySearch}
-            onSearchChange={setCategorySearch}
-            onClearSearch={handleClearSearch}
-            onSelect={selectCategory}
-            onReorder={handleReorder}
-            onEdit={(cat) => {
-              setEditingCategory(cat);
-              setShowCategoryEdit(true);
-            }}
-            onDelete={(id) => setDeleteTarget(id)}
-          />
+          <div ref={categoryDropRef} className="relative flex-1 flex flex-col min-h-0">
+            <CategoryList
+              categories={categories}
+              activeCategoryId={activeCategoryId}
+              searchText={categorySearch}
+              onSearchChange={setCategorySearch}
+              onClearSearch={handleClearSearch}
+              onSelect={selectCategory}
+              onReorder={handleReorder}
+              onEdit={(cat) => {
+                setEditingCategory(cat);
+                setCategoryDraft(null);
+                setShowCategoryEdit(true);
+              }}
+              onDelete={(id) => setDeleteTarget(id)}
+            />
+            <CategoryDropOverlay state={categoryDrop} />
+          </div>
         </div>
 
         {/* Main content */}
@@ -455,12 +483,7 @@ export function App() {
               searchInputRef={fileSearchRef}
             />
           ) : (
-            <EmptyGuide
-              onCreate={() => {
-                setEditingCategory(null);
-                setShowCategoryEdit(true);
-              }}
-            />
+            <EmptyGuide onCreate={() => openNewCategory()} />
           )}
         </div>
       </div>
@@ -469,6 +492,7 @@ export function App() {
       <CategoryEditDialog
         open={showCategoryEdit}
         category={editingCategory}
+        draft={categoryDraft}
         onClose={() => setShowCategoryEdit(false)}
         onSaved={handleCategorySaved}
       />

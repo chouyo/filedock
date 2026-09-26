@@ -5,6 +5,15 @@
   "empty.title": "暂无分类",
   "empty.subtitle": "创建分类以开始管理您的文件",
   "empty.action": "新建分类",
+  "empty.dropHint": "也可以将文件或文件夹拖到左侧栏快速创建",
+
+  "drop.hint": "拖到此处创建分类",
+  "drop.release": "松开以创建分类",
+  "drop.byFile": "按文件",
+  "drop.byType": "按文件类型",
+  "drop.folderCount": "{n} 个文件夹",
+  "drop.moreFiles": "等 {n} 个文件",
+  "drop.alsoFolders": "另含 {n} 个文件夹，将按目录添加",
 
   "loading.files": "正在加载文件...",
 
@@ -55,6 +64,7 @@
   "toast.categoryDeleted": "分类已删除",
   "toast.categoryDeleteFailed": "删除分类失败",
   "toast.saveFailed": "保存失败",
+  "toast.dropUnrecognized": "无法识别拖入的项目",
 
   "close.title": "关闭应用",
   "close.message": "您希望关闭窗口，还是最小化到系统托盘？",

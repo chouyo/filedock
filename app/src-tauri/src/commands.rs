@@ -256,6 +256,60 @@ pub fn get_config_dir() -> String {
     crate::config::app_config_dir().to_string_lossy().to_string()
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathInfo {
+    pub path: String,
+    /// "dir" | "file" | "missing"
+    pub kind: String,
+    pub name: String,
+    /// Lowercase, without the leading dot; empty when there is none.
+    pub extension: String,
+    pub parent_dir: String,
+}
+
+fn inspect_path(raw: &str) -> PathInfo {
+    let path = std::path::Path::new(raw);
+    let kind = if path.is_dir() {
+        "dir"
+    } else if path.is_file() {
+        "file"
+    } else {
+        "missing"
+    };
+    // Drive roots such as `D:\` have no file name; fall back to the path
+    // itself without trailing separators (`D:`).
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| raw.trim_end_matches(['\\', '/']).to_string());
+    // `Path::extension` already treats dotfiles like `.gitignore` as having
+    // no extension.
+    let extension = if kind == "file" {
+        path.extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let parent_dir = path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    PathInfo {
+        path: raw.to_string(),
+        kind: kind.to_string(),
+        name,
+        extension,
+        parent_dir,
+    }
+}
+
+#[tauri::command]
+pub fn inspect_paths(paths: Vec<String>) -> Vec<PathInfo> {
+    paths.iter().map(|p| inspect_path(p)).collect()
+}
+
 #[tauri::command]
 pub fn is_valid_directory(path: String) -> bool {
     let path = std::path::Path::new(&path);

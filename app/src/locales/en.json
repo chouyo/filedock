@@ -5,6 +5,15 @@
   "empty.title": "No Categories",
   "empty.subtitle": "Create a category to start managing your files",
   "empty.action": "New Category",
+  "empty.dropHint": "You can also drag files or folders onto the sidebar",
+
+  "drop.hint": "Drop here to create a category",
+  "drop.release": "Release to create a category",
+  "drop.byFile": "By file",
+  "drop.byType": "By file type",
+  "drop.folderCount": "{n} folders",
+  "drop.moreFiles": "{n} files in total",
+  "drop.alsoFolders": "Also includes {n} folders, added as directory rules",
 
   "loading.files": "Loading files...",
 
@@ -55,6 +64,7 @@
   "toast.categoryDeleted": "Category deleted",
   "toast.categoryDeleteFailed": "Failed to delete category",
   "toast.saveFailed": "Save failed",
+  "toast.dropUnrecognized": "Unrecognized dropped items",
 
   "close.title": "Close App",
   "close.message": "Close the window, or minimize to system tray?",

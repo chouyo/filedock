@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { Plus, Trash2 } from 'lucide-react';
@@ -6,11 +6,13 @@ import { Modal } from './Modal';
 import { DirectoryInput } from './DirectoryInput';
 import { useI18n } from '../i18n/useI18n';
 import { useToast } from './Toast';
-import type { Category, TargetRule } from '../types';
+import type { Category, CategoryDraft, TargetRule } from '../types';
 
 interface CategoryEditDialogProps {
   open: boolean;
   category: Category | null;
+  /** Prefill for a new category (ignored when editing). */
+  draft?: CategoryDraft | null;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -19,20 +21,34 @@ function emptyTarget(): TargetRule {
   return { id: '', dir: '', matchType: 'glob', pattern: '', recursive: false };
 }
 
-export function CategoryEditDialog({ open, category, onClose, onSaved }: CategoryEditDialogProps) {
+export function CategoryEditDialog({
+  open,
+  category,
+  draft,
+  onClose,
+  onSaved,
+}: CategoryEditDialogProps) {
   const { t } = useI18n();
   const { showToast } = useToast();
   const [name, setName] = useState('');
   const [targets, setTargets] = useState<TargetRule[]>([emptyTarget()]);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (open) {
-      setName(category?.name ?? '');
-      setTargets(
-        category && category.targets.length > 0 ? category.targets.map((t) => ({ ...t })) : [emptyTarget()],
-      );
+    if (!open) return;
+    const source = category ?? draft ?? null;
+    setName(source?.name ?? '');
+    setTargets(
+      source && source.targets.length > 0 ? source.targets.map((t) => ({ ...t })) : [emptyTarget()],
+    );
+    // A prefilled name is a suggestion; select it so typing replaces it.
+    if (!category && draft) {
+      requestAnimationFrame(() => {
+        nameInputRef.current?.focus();
+        nameInputRef.current?.select();
+      });
     }
-  }, [open, category]);
+  }, [open, category, draft]);
 
   const updateTarget = (index: number, patch: Partial<TargetRule>) => {
     setTargets((prev) => prev.map((t, i) => (i === index ? { ...t, ...patch } : t)));
@@ -107,6 +123,7 @@ export function CategoryEditDialog({ open, category, onClose, onSaved }: Categor
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium text-ink">{t('category.name')}</label>
           <input
+            ref={nameInputRef}
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}

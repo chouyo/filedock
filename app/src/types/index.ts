@@ -86,3 +86,20 @@ export interface SortState {
   field: SortField;
   direction: SortDirection;
 }
+
+export interface PathInfo {
+  path: string;
+  kind: 'dir' | 'file' | 'missing';
+  name: string;
+  /** Lowercase, without the leading dot; empty when there is none. */
+  extension: string;
+  parentDir: string;
+}
+
+/** How dropped files become rules: match the exact files, or their types. */
+export type DropMode = 'file' | 'type';
+
+export interface CategoryDraft {
+  name: string;
+  targets: TargetRule[];
+}

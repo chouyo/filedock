@@ -3,6 +3,7 @@ import { startDrag } from '@crabnebula/tauri-plugin-drag';
 import type { FileEntry, ColumnKey, Language } from '../types';
 import { getColumnDef, renderCell } from '../lib/columns';
 import { cn } from '../lib/utils';
+import { beginInternalDrag, endInternalDrag } from '../lib/internalDrag';
 
 const DRAG_ICON =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
@@ -18,12 +19,20 @@ export function FileRow({ file, columns, lang, onContextMenu }: FileRowProps) {
   const handleDragStart = useCallback(
     async (e: React.DragEvent) => {
       e.preventDefault();
+      // Flag the drag as ours so the sidebar drop zone ignores it. The flag
+      // is cleared when the drag finishes; the drop listener also clears it
+      // when the drag leaves or drops, in case no event arrives.
+      beginInternalDrag();
       try {
-        await startDrag({
-          item: [file.path],
-          icon: DRAG_ICON,
-        });
+        await startDrag(
+          {
+            item: [file.path],
+            icon: DRAG_ICON,
+          },
+          () => endInternalDrag(),
+        );
       } catch (err) {
+        endInternalDrag();
         console.error('Drag failed:', err);
       }
     },

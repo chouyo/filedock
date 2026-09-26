@@ -14,6 +14,7 @@ export function EmptyGuide({ onCreate }: { onCreate: () => void }) {
       >
         + {t('empty.action')}
       </button>
+      <div className="text-xs text-ink-secondary opacity-70">{t('empty.dropHint')}</div>
     </div>
   );
 }
