@@ -17,18 +17,26 @@ export function TitleBar({ onOpenSettings }: TitleBarProps) {
 
   useEffect(() => {
     let unlistenFn: (() => void) | undefined;
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     const setup = async () => {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       const win = getCurrentWindow();
       winRef.current = win;
-      const unlisten = await win.onResized(async () => {
-        setIsMaximized(await win.isMaximized());
+      // Resized fires every frame of a live resize; querying isMaximized on each
+      // one competes with the webview's own relayout (noticeable on macOS), so
+      // only check once the resize has settled.
+      const unlisten = await win.onResized(() => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(async () => {
+          setIsMaximized(await win.isMaximized());
+        }, 150);
       });
       unlistenFn = unlisten;
       setIsMaximized(await win.isMaximized());
     };
     setup();
     return () => {
+      clearTimeout(resizeTimer);
       unlistenFn?.();
     };
   }, []);

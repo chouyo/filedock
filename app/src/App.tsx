@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { Plus } from 'lucide-react';
 import { useI18n } from './i18n/useI18n';
 import { useToast } from './components/Toast';
@@ -85,6 +86,11 @@ export function App() {
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     const isDark = theme === 'dark' || (theme === 'system' && prefersDark);
     document.documentElement.classList.toggle('dark', isDark);
+    // Match the native window/webview background to the theme so the area a
+    // live resize exposes before the webview catches up (visible on macOS)
+    // blends in instead of flashing the default white.
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim();
+    if (bg) getCurrentWebviewWindow().setBackgroundColor(bg).catch(() => {});
   }, []);
 
   useEffect(() => {

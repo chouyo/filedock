@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::{LogicalPosition, LogicalSize, Manager, WebviewWindow};
@@ -87,13 +89,21 @@ pub fn install_window_state_listener(app: &tauri::AppHandle) {
         None => return,
     };
     let app_handle = app.clone();
+    // Moved/Resized fire on every frame of a live drag. Only the task spawned by
+    // the latest event saves, so the window queries (which hop to the main thread
+    // on macOS) and the disk write happen once, after the drag has settled.
+    let generation = Arc::new(AtomicU64::new(0));
 
     window.on_window_event(move |event| {
         if let tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) = event {
             let handle = app_handle.clone();
+            let generation = generation.clone();
+            let current = generation.fetch_add(1, Ordering::Relaxed) + 1;
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(500)).await;
-                let _ = collect_and_save_window_state(&handle);
+                if generation.load(Ordering::Relaxed) == current {
+                    let _ = collect_and_save_window_state(&handle);
+                }
             });
         }
     });

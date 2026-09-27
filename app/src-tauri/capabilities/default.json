@@ -6,6 +6,8 @@
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
+    "core:window:allow-set-background-color",
+    "core:webview:allow-set-webview-background-color",
     "drag:default",
     "dialog:default",
     "clipboard-manager:default",
