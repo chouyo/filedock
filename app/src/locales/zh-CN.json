@@ -1,5 +1,5 @@
 {
-  "app.name": "FileDock",
+  "app.name": "File Dock",
   "app.starting": "正在启动...",
 
   "empty.title": "暂无分类",
@@ -74,7 +74,7 @@
   "close.cancel": "取消",
 
   "quit.title": "确认退出",
-  "quit.message": "确定要退出 FileDock 吗？",
+  "quit.message": "确定要退出 File Dock 吗？",
   "quit.confirm": "退出",
   "quit.cancel": "取消",
 

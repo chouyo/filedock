@@ -23,7 +23,7 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 
     let _tray = TrayIconBuilder::with_id("main-tray")
         .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("FileDock")
+        .tooltip("File Dock")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {

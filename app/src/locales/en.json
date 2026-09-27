@@ -1,5 +1,5 @@
 {
-  "app.name": "FileDock",
+  "app.name": "File Dock",
   "app.starting": "Starting...",
 
   "empty.title": "No Categories",
@@ -74,7 +74,7 @@
   "close.cancel": "Cancel",
 
   "quit.title": "Confirm Exit",
-  "quit.message": "Quit FileDock?",
+  "quit.message": "Quit File Dock?",
   "quit.confirm": "Exit",
   "quit.cancel": "Cancel",
 

@@ -6,6 +6,13 @@
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns"
-    ]
+    ],
+    "resources": {
+      "macos/en.lproj/InfoPlist.strings": "en.lproj/InfoPlist.strings",
+      "macos/zh-Hans.lproj/InfoPlist.strings": "zh-Hans.lproj/InfoPlist.strings"
+    },
+    "macOS": {
+      "infoPlist": "Info.macos.plist"
+    }
   }
 }

@@ -3,6 +3,8 @@ mod config;
 mod file_entry;
 mod matcher;
 mod maximize;
+#[cfg(target_os = "macos")]
+mod menu;
 mod scan;
 mod settings;
 mod tray;
@@ -18,7 +20,11 @@ use commands::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(menu::build);
+
+    builder
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Finder/Dock only use the localized display name (macos/*.lproj/InfoPlist.strings)
+	     when this value matches the bundle file name, which stays FileDock.app. -->
+	<key>CFBundleDisplayName</key>
+	<string>FileDock</string>
+	<key>CFBundleName</key>
+	<string>File Dock</string>
+	<key>LSHasLocalizedDisplayName</key>
+	<true/>
+</dict>
+</plist>
