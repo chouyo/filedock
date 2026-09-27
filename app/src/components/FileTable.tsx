@@ -1,14 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { useI18n } from '../i18n/useI18n';
 import { cn } from '../lib/utils';
-import { ALL_COLUMNS } from '../lib/columns';
-import { FileRow } from './FileRow';
+import { ALL_COLUMNS, FLEX_COLUMN_MIN_WIDTH, getColumnDef, type ColumnDef } from '../lib/columns';
+import { useVirtualRows } from '../lib/useVirtualRows';
+import { FileRow, FILE_ROW_HEIGHT } from './FileRow';
 import { Tooltip } from './Tooltip';
 import { SearchInput } from './SearchInput';
 import type { FileEntry, ColumnKey, Language } from '../types';
 
+/** Width in px of the trailing column that holds the column settings button. */
+const SETTINGS_COLUMN_WIDTH = 40;
+
+// Same ordering as String.prototype.localeCompare, without building a
+// collator on every comparison.
+const collator = new Intl.Collator();
+
 interface FileTableProps {
+  /** Scroll resets to the top when this changes (the active category). */
+  categoryId: string;
   files: FileEntry[];
   columns: ColumnKey[];
   lang: Language;
@@ -24,6 +34,7 @@ interface FileTableProps {
 }
 
 export function FileTable({
+  categoryId,
   files,
   columns,
   lang,
@@ -42,6 +53,22 @@ export function FileTable({
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [showColumnSettings, setShowColumnSettings] = useState(false);
   const columnSettingsRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Filtering runs on the deferred value so typing stays responsive; the
+  // input itself is bound to `searchText`.
+  const deferredSearchText = useDeferredValue(searchText);
+
+  const columnDefs = useMemo(
+    () => columns.map(getColumnDef).filter((d): d is ColumnDef => !!d),
+    [columns],
+  );
+  const tableMinWidth = useMemo(
+    () =>
+      columnDefs.reduce((sum, d) => sum + (d.width ?? FLEX_COLUMN_MIN_WIDTH), 0) +
+      SETTINGS_COLUMN_WIDTH,
+    [columnDefs],
+  );
 
   const sortedFiles = useMemo(() => {
     if (!sortCol) return files;
@@ -53,7 +80,7 @@ export function FileTable({
       if (typeof va === 'number' && typeof vb === 'number') {
         cmp = va - vb;
       } else {
-        cmp = String(va ?? '').localeCompare(String(vb ?? ''));
+        cmp = collator.compare(String(va ?? ''), String(vb ?? ''));
       }
       return sortDir === 'asc' ? cmp : -cmp;
     });
@@ -61,10 +88,22 @@ export function FileTable({
   }, [files, sortCol, sortDir]);
 
   const filteredFiles = useMemo(() => {
-    if (!searchText) return sortedFiles;
-    const q = searchText.toLowerCase();
+    if (!deferredSearchText) return sortedFiles;
+    const q = deferredSearchText.toLowerCase();
     return sortedFiles.filter((f) => f.name.toLowerCase().includes(q));
-  }, [sortedFiles, searchText]);
+  }, [sortedFiles, deferredSearchText]);
+
+  const { start, end, paddingTop, paddingBottom } = useVirtualRows({
+    count: filteredFiles.length,
+    rowHeight: FILE_ROW_HEIGHT,
+    scrollRef,
+  });
+
+  // A different category, query or ordering starts from the top. Auto
+  // refreshes only replace `files`, so they keep the scroll position.
+  useLayoutEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [categoryId, deferredSearchText, sortCol, sortDir]);
 
   const handleSort = (key: ColumnKey) => {
     if (sortCol === key) {
@@ -118,19 +157,29 @@ export function FileTable({
         </button>
       </div>
 
-      <div className="flex-1 overflow-auto relative">
-        <table className="w-full" onContextMenu={(e) => e.preventDefault()}>
+      <div ref={scrollRef} className="flex-1 overflow-auto relative">
+        <table
+          className="w-full table-fixed"
+          style={{ minWidth: tableMinWidth }}
+          aria-rowcount={filteredFiles.length + 1}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <colgroup>
+            {columnDefs.map((def) => (
+              <col key={def.key} style={def.width ? { width: def.width } : undefined} />
+            ))}
+            <col style={{ width: SETTINGS_COLUMN_WIDTH }} />
+          </colgroup>
           <thead className="sticky top-0 bg-surface-secondary z-10">
-            <tr className="border-b border-divider">
-              {columns.map((key) => {
-                const def = ALL_COLUMNS.find((c) => c.key === key);
-                if (!def) return null;
+            <tr aria-rowindex={1} className="border-b border-divider">
+              {columnDefs.map((def) => {
+                const key = def.key;
                 return (
                   <th
                     key={key}
                     onClick={() => def.sortable && handleSort(key)}
                     className={cn(
-                      'px-3 py-2 text-xs font-medium text-ink-secondary text-left whitespace-nowrap',
+                      'px-3 py-2 text-xs font-medium text-ink-secondary text-left whitespace-nowrap overflow-hidden text-ellipsis',
                       def.align === 'right' && 'text-right',
                       def.align === 'center' && 'text-center',
                       def.sortable && 'cursor-pointer hover:text-ink',
@@ -143,7 +192,7 @@ export function FileTable({
                   </th>
                 );
               })}
-              <th className="relative w-8 px-2 py-2">
+              <th className="relative px-2 py-2">
                 <div ref={columnSettingsRef} className="relative">
                   <button
                     onClick={() => setShowColumnSettings((v) => !v)}
@@ -176,15 +225,26 @@ export function FileTable({
             </tr>
           </thead>
           <tbody>
-            {filteredFiles.map((file) => (
+            {paddingTop > 0 && (
+              <tr aria-hidden="true" style={{ height: paddingTop }}>
+                <td colSpan={columnDefs.length + 1} className="p-0" />
+              </tr>
+            )}
+            {filteredFiles.slice(start, end).map((file, i) => (
               <FileRow
                 key={file.path}
                 file={file}
-                columns={columns}
+                columns={columnDefs}
                 lang={lang}
+                rowIndex={start + i + 2}
                 onContextMenu={onContextMenu}
               />
             ))}
+            {paddingBottom > 0 && (
+              <tr aria-hidden="true" style={{ height: paddingBottom }}>
+                <td colSpan={columnDefs.length + 1} className="p-0" />
+              </tr>
+            )}
           </tbody>
         </table>
         {filteredFiles.length === 0 && (

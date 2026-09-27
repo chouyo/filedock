@@ -41,9 +41,11 @@ export default defineConfig({
 });
 
 // React DevTools standalone bridge (dev only).
-// Spawns the react-devtools window on :8097 and injects the bridge script
-// ahead of React so it works in both the browser and the Tauri WebView2.
-const DEVTOOLS_PORT = 8097;
+// Spawns the react-devtools window and injects the bridge script ahead of
+// React, only inside the Tauri WebView. Uses a non-default port: other apps
+// on the machine (e.g. Electron apps shipping the DevTools backend) connect
+// to the default 8097 and would keep taking over the single connection.
+const DEVTOOLS_PORT = Number(process.env.RDT_PORT) || 8098;
 
 function reactDevtools(): PluginOption {
   const enabled = process.env.RDT !== "false";
@@ -63,7 +65,10 @@ function reactDevtools(): PluginOption {
       };
       const check = () => {
         const c = net.createConnection({ port });
-        c.once("connect", () => done(true));
+        c.once("connect", () => {
+          c.destroy();
+          done(true);
+        });
         c.once("error", retry);
       };
       probe.once("connect", () => done(true));
@@ -83,6 +88,7 @@ function reactDevtools(): PluginOption {
 
       // Spawn immediately; don't block on async checks before launching.
       child = spawn(process.execPath, [binPath], {
+        env: { ...process.env, REACT_DEVTOOLS_PORT: String(DEVTOOLS_PORT) },
         stdio: "inherit",
         windowsHide: false,
       });
@@ -96,8 +102,8 @@ function reactDevtools(): PluginOption {
       waitForPort(DEVTOOLS_PORT).then((ok) =>
         server.config.logger.info(
           ok
-            ? "react-devtools ready on :8097"
-            : "react-devtools not reachable on :8097 (bridge inactive)",
+            ? `react-devtools ready on :${DEVTOOLS_PORT}`
+            : `react-devtools not reachable on :${DEVTOOLS_PORT} (bridge inactive)`,
         ),
       );
 
@@ -111,10 +117,15 @@ function reactDevtools(): PluginOption {
     },
     transformIndexHtml() {
       if (!enabled) return undefined;
+      // The standalone DevTools accepts one connection at a time, so a plain
+      // browser tab on the dev server would keep stealing it from the Tauri
+      // WebView (and, lacking Tauri APIs, it renders no React roots, which
+      // shows up as "Profiling not supported"). Only load the bridge inside
+      // Tauri; document.write keeps it synchronous so it still runs before React.
       return [
         {
           tag: "script",
-          attrs: { src: `http://localhost:${DEVTOOLS_PORT}` },
+          children: `if ("__TAURI_INTERNALS__" in window) document.write('<script src="http://localhost:${DEVTOOLS_PORT}"><\\/script>');`,
           injectTo: "head-prepend",
         },
       ];
