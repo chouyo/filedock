@@ -3,7 +3,7 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 use crate::config::Category;
-use crate::file_entry::{file_entry_from_path, FileEntry};
+use crate::file_entry::{file_entry_from_metadata, FileEntry};
 use crate::matcher::build_matcher;
 
 pub fn scan_category(category: &Category) -> Vec<FileEntry> {
@@ -29,7 +29,9 @@ pub fn scan_category(category: &Category) -> Vec<FileEntry> {
             if entry.file_type().is_file() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if matcher.matches(&name) {
-                    let fe = file_entry_from_path(entry.path());
+                    // On Windows walkdir already holds this metadata from the
+                    // directory listing, so this needs no extra system call.
+                    let fe = file_entry_from_metadata(entry.path(), entry.metadata().ok());
                     set.insert(fe.path.clone(), fe);
                 }
             }

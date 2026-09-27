@@ -16,15 +16,15 @@ pub struct FileEntry {
     pub is_readonly: bool,
 }
 
-pub fn file_entry_from_path(path: &Path) -> FileEntry {
-    let (size, created_at, modified_at, accessed_at, is_readonly) = match std::fs::metadata(path) {
-        Ok(m) => {
+pub fn file_entry_from_metadata(path: &Path, metadata: Option<std::fs::Metadata>) -> FileEntry {
+    let (size, created_at, modified_at, accessed_at, is_readonly) = match metadata {
+        Some(m) => {
             let modified = m.modified().map(system_time_to_millis).unwrap_or(0);
             let created = m.created().map(system_time_to_millis).unwrap_or(modified);
             let accessed = m.accessed().map(system_time_to_millis).unwrap_or(modified);
             (m.len(), created, modified, accessed, m.permissions().readonly())
         }
-        Err(_) => (0, 0, 0, 0, false),
+        None => (0, 0, 0, 0, false),
     };
 
     let path_str = path.to_string_lossy().to_string();
