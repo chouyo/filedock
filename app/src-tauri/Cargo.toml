@@ -35,6 +35,14 @@ tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
 webview2-com = "0.38"
 windows-core = "0.61"
 
+# Versions must match the ones tao resolves to (see Cargo.lock).
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSScreen", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSGeometry", "NSString"] }
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKContentWorld", "WKFrameInfo", "WKWebView"] }
+
 [features]
 # This feature is used for production builds (no devtools)
 default = []

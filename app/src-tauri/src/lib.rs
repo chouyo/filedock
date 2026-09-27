@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod file_entry;
 mod matcher;
+mod maximize;
 mod scan;
 mod settings;
 mod tray;

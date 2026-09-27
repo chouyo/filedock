@@ -1140,9 +1140,14 @@ dependencies = [
 name = "filedock"
 version = "1.0.0"
 dependencies = [
+ "block2",
  "dirs 5.0.1",
  "glob",
  "notify",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-web-kit",
  "regex",
  "serde",
  "serde_json",

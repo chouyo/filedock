@@ -36,7 +36,7 @@ pub fn collect_window_state(window: &WebviewWindow) -> Option<WindowState> {
 
 pub fn restore_window_state(window: &WebviewWindow, state: &WindowState) {
     if state.maximized {
-        let _ = window.maximize();
+        crate::maximize::set_maximized(window, true, false);
         return;
     }
 

@@ -5,6 +5,7 @@ use tauri::{Emitter, Manager, State};
 
 use crate::config::{self, Category, Config, Session};
 use crate::file_entry::FileEntry;
+use crate::maximize;
 use crate::scan;
 use crate::settings::{self, Settings};
 use crate::util;
@@ -362,11 +363,7 @@ pub fn minimize_main_window(app: tauri::AppHandle) {
 #[tauri::command]
 pub fn toggle_maximize_main_window(app: tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
-        if w.is_maximized().unwrap_or(false) {
-            let _ = w.unmaximize();
-        } else {
-            let _ = w.maximize();
-        }
+        maximize::toggle(&w);
     }
 }
 
