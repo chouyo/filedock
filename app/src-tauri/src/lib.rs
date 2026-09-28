@@ -125,14 +125,21 @@ pub fn run() {
         .run(|app_handle, event| {
             // On macOS, clicking the Dock icon while the window is hidden/closed
             // fires Reopen instead of a window event; restore it manually.
-            if let tauri::RunEvent::Reopen {
-                has_visible_windows,
-                ..
-            } = event
+            #[cfg(target_os = "macos")]
             {
-                if !has_visible_windows {
-                    tray::show_main_window(app_handle);
+                if let tauri::RunEvent::Reopen {
+                    has_visible_windows,
+                    ..
+                } = event
+                {
+                    if !has_visible_windows {
+                        tray::show_main_window(app_handle);
+                    }
                 }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (app_handle, event);
             }
         });
 }
