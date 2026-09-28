@@ -41,6 +41,8 @@ Windows desktop application for managing file categories and their monitored dir
 | `cd app && npm run typecheck` | TypeScript type checking |
 | `cd app && npm run lint` | ESLint |
 | `cargo check` (in `app/src-tauri/`) | Check Rust compilation |
+| `./examples/scripts/run-all.sh [size]` (in `app/src-tauri/`) | Run the file search benchmarks (seekr / walk + notify + SQLite / Spotlight vs. the current scanner) and print a comparison; `run-all.ps1` on Windows. See `app/src-tauri/examples/README.md` |
+| `cargo run --release --example bench_<name> -- --help` (in `app/src-tauri/`) | Run one benchmark program (`bench_dataset`, `bench_current`, `bench_seekr`, `bench_native`, `bench_spotlight`, `bench_compare`) |
 
 ## Build Variants
 

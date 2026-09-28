@@ -1,0 +1,10 @@
+{
+  "rules": [
+    { "name": "images", "dir": "photos", "matchType": "glob", "pattern": "*.jpg;*.png;*.heic", "recursive": true },
+    { "name": "documents", "dir": "docs", "matchType": "glob", "pattern": "*.pdf;*.docx;*.xlsx", "recursive": true },
+    { "name": "downloads-top", "dir": "downloads", "matchType": "glob", "pattern": "*", "recursive": false },
+    { "name": "rust-sources", "dir": "projects", "matchType": "regex", "pattern": "^[a-z0-9_]+\\.rs$", "recursive": true },
+    { "name": "everything", "dir": ".", "matchType": "glob", "pattern": "*", "recursive": true }
+  ],
+  "searchTerms": ["a", "report", "2023", "_v2", "img_00"]
+}

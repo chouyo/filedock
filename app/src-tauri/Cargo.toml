@@ -43,6 +43,23 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSGeometry", "NSString"] }
 objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKContentWorld", "WKFrameInfo", "WKWebView"] }
 
+# Search benchmark examples (examples/bench_*); never linked into the app.
+# See examples/README.md.
+[dev-dependencies]
+seekr = { git = "https://github.com/muhammad-fiaz/seekr.git", rev = "f11bc11f15f256163d41f188dac49ceaf4a445f7" }
+# Must stay on the same major as seekr's: two bundled SQLite copies cannot link together.
+rusqlite = { version = "0.40", features = ["bundled"] }
+chrono = "0.4"
+ignore = "0.4"
+rayon = "1"
+clap = { version = "4", features = ["derive"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+core-foundation = "0.10"
+
 [features]
 # This feature is used for production builds (no devtools)
 default = []
