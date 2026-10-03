@@ -32,6 +32,7 @@ Windows desktop application for managing file categories and their monitored dir
 
 | Command | Description |
 |---|---|
+| `. .\setup-env.ps1` / `source ./setup-env.sh` | Set up a repo-local Node + Rust + Tauri CLI toolchain in `sdk/` (needs `fnm` and `rustup-init` in `tools/`) |
 | `cd app && npm install` | Install frontend dependencies |
 | `cd app && npm run dev` | Start Vite dev server |
 | `cd app && npm run tauri dev` | Start Tauri dev (Rust + Vite) |
