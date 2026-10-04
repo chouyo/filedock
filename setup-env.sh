@@ -5,6 +5,7 @@
 # 特点：所有路径基于脚本所在目录推导，整个文件夹可任意移动
 #       自动读取 app/.node-version，安装并启用对应 Node
 #       在 app 目录执行 npm install（npm 源见 app/.npmrc）
+#       补齐 react-devtools 所需的 Electron 二进制（缺失时从镜像下载）
 #       自动初始化 Rust 工具链
 #       自动进入 src-tauri 安装 Tauri CLI
 # ============================================================
@@ -98,6 +99,43 @@ if [ -d "$APP_DIR" ]; then
     echo "[npm] npm install 完成"
 else
     echo "[npm] 未找到 $APP_DIR，跳过 npm install" >&2
+fi
+
+# ---------- 6.6 补齐 react-devtools 所需的 Electron 二进制 ----------
+# 详见 docs/React DevTools 集成与排障经验.md。electron 的 postinstall 可能未下载成功
+# （dist/ 为空、path.txt 缺失），或卡在 "Downloading Electron binary..."，导致 react-devtools 无法启动。
+# 不用 `npm install electron --no-save`：它会装最新版 electron（与锁文件不符，
+# 且新版 install.js 在当前 Node 下报 ERR_REQUIRE_ESM）。这里按锁定版本从镜像手动下载解压。
+if [ -d "$APP_DIR/node_modules/react-devtools" ]; then
+    (
+        cd "$APP_DIR" || exit 1
+        # 按 react-devtools 的解析路径定位 electron（可能是顶层或嵌套的那份）
+        ELECTRON_DIR=$(node -p "const p=require('path');p.dirname(require.resolve('electron/package.json',{paths:[p.dirname(require.resolve('react-devtools/package.json'))]}))") || exit 1
+        if node -e "require(process.argv[1])" "$ELECTRON_DIR" >/dev/null 2>&1; then
+            echo "[electron] 二进制已就绪，跳过"
+            exit 0
+        fi
+        VERSION=$(node -p "require(process.argv[1] + '/package.json').version" "$ELECTRON_DIR")
+        PLATFORM=$(node -p "process.platform")
+        ARCH=$(node -p "process.arch")
+        case "$PLATFORM" in
+            darwin) EXE_PATH="Electron.app/Contents/MacOS/Electron" ;;
+            win32)  EXE_PATH="electron.exe" ;;
+            *)      EXE_PATH="electron" ;;
+        esac
+        URL="https://cdn.npmmirror.com/binaries/electron/${VERSION}/electron-v${VERSION}-${PLATFORM}-${ARCH}.zip"
+        ZIP=$(mktemp "${TMPDIR:-/tmp}/electron.XXXXXX") || exit 1
+        echo "[electron] 二进制缺失，下载 $URL ..."
+        curl -L --fail --retry 2 --connect-timeout 20 --max-time 600 -o "$ZIP" "$URL" || { rm -f "$ZIP"; exit 1; }
+        rm -rf "$ELECTRON_DIR/dist"
+        mkdir -p "$ELECTRON_DIR/dist"
+        unzip -q "$ZIP" -d "$ELECTRON_DIR/dist" || { rm -f "$ZIP"; exit 1; }
+        rm -f "$ZIP"
+        # path.txt 不能有末尾换行；version 文件让 install.js 认为已安装
+        printf '%s' "$EXE_PATH" > "$ELECTRON_DIR/path.txt"
+        printf 'v%s' "$VERSION" > "$ELECTRON_DIR/dist/version"
+        echo "[electron] 已安装 Electron $VERSION 到 $ELECTRON_DIR/dist"
+    ) || echo "[electron] 补齐 Electron 失败（React DevTools 将不可用）" >&2
 fi
 
 # ---------- 7. 初始化 Rust 工具链 ----------

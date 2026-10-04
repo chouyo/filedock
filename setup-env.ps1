@@ -4,6 +4,7 @@
 # 特点：所有路径基于脚本所在目录推导，整个文件夹可任意移动
 #       自动读取 app\.node-version，安装并启用对应 Node
 #       在 app 目录执行 npm install（npm 源见 app\.npmrc）
+#       补齐 react-devtools 所需的 Electron 二进制（缺失时从镜像下载）
 #       自动初始化 Rust 工具链
 #       自动进入 src-tauri 安装 Tauri CLI
 # ============================================================
@@ -83,6 +84,44 @@ try {
         }
     } else {
         Write-Warning "[npm] 未找到 $AppDir，跳过 npm install"
+    }
+
+    # ---------- 6.6 补齐 react-devtools 所需的 Electron 二进制 ----------
+    # 详见 docs\React DevTools 集成与排障经验.md。electron 的 postinstall 可能未下载成功
+    # （dist\ 为空、path.txt 缺失），导致 react-devtools 无法启动。
+    # 不用 `npm install electron --no-save`：它会装最新版 electron（与锁文件不符，
+    # 且新版 install.js 在当前 Node 下报 ERR_REQUIRE_ESM）。这里按锁定版本从镜像手动下载解压。
+    if (Test-Path (Join-Path $AppDir "node_modules\react-devtools")) {
+        Push-Location $AppDir
+        try {
+            # 按 react-devtools 的解析路径定位 electron（可能是顶层或嵌套的那份）
+            $electronDir = (& node -p "const p=require('path');p.dirname(require.resolve('electron/package.json',{paths:[p.dirname(require.resolve('react-devtools/package.json'))]}))").Trim()
+            # 不能用 2>$null：PS 5.1 + ErrorActionPreference=Stop 下原生命令的 stderr 会变成终止错误
+            & node -e "try{require(process.argv[1]);process.exit(0)}catch(e){process.exit(1)}" $electronDir
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "[electron] 二进制已就绪，跳过"
+            } else {
+                $ver  = (& node -p "require(process.argv[1] + '/package.json').version" $electronDir).Trim()
+                $arch = (& node -p "process.arch").Trim()
+                $url  = "https://cdn.npmmirror.com/binaries/electron/$ver/electron-v$ver-win32-$arch.zip"
+                $zip  = Join-Path $env:TEMP "electron-v$ver-win32-$arch.zip"
+                $dist = Join-Path $electronDir "dist"
+                Write-Host "[electron] 二进制缺失，下载 $url ..."
+                & curl.exe -L --fail --retry 2 --connect-timeout 20 --max-time 600 -o $zip $url
+                if ($LASTEXITCODE -ne 0) { throw "下载失败: $url" }
+                if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
+                Expand-Archive -Path $zip -DestinationPath $dist -Force
+                Remove-Item -Force $zip
+                # path.txt 不能有末尾换行；version 文件让 install.js 认为已安装
+                [IO.File]::WriteAllText((Join-Path $electronDir "path.txt"), "electron.exe")
+                [IO.File]::WriteAllText((Join-Path $dist "version"), "v$ver")
+                Write-Host "[electron] 已安装 Electron $ver 到 $dist"
+            }
+        } catch {
+            Write-Warning "[electron] 补齐 Electron 失败（React DevTools 将不可用）: $_"
+        } finally {
+            Pop-Location
+        }
     }
 
     # ---------- 7. 初始化 Rust 工具链 ----------
