@@ -5,7 +5,8 @@
 #       自动读取 app\.node-version，安装并启用对应 Node
 #       在 app 目录执行 npm install（npm 源见 app\.npmrc）
 #       补齐 react-devtools 所需的 Electron 二进制（缺失时从镜像下载）
-#       自动初始化 Rust 工具链
+#       自动初始化 Rust 工具链（版本取自 app\src-tauri\rust-toolchain.toml，
+#       tools\ 下没有 rustup-init.exe 时从官方源/镜像下载）
 #       自动进入 src-tauri 安装 Tauri CLI
 # ============================================================
 
@@ -13,6 +14,11 @@
 $__setupEnvPrevEAP = $ErrorActionPreference
 $ErrorActionPreference = 'Stop'
 try {
+
+    # 原生命令失败不会触发 ErrorActionPreference，需显式检查退出码
+    function Assert-ExitCode([string]$what) {
+        if ($LASTEXITCODE -ne 0) { throw "$what 失败（退出码 $LASTEXITCODE）" }
+    }
 
     # ---------- 0. 项目目录（不用 param，改普通变量，避免位置限制） ----------
     # 默认取脚本同级的 app 目录；如需改，直接改这一行
@@ -62,9 +68,11 @@ try {
 
             Write-Host "[node] 执行 fnm install $nodeVer ..."
             & $fnmExe install $nodeVer
+            Assert-ExitCode "[node] fnm install"
 
             Write-Host "[node] 执行 fnm use $nodeVer ..."
             & $fnmExe use $nodeVer
+            Assert-ExitCode "[node] fnm use"
 
             Write-Host "[node] 当前 node 版本: $(& node --version)"
         }
@@ -76,10 +84,16 @@ try {
     if (Test-Path $AppDir) {
         Write-Host "[npm] 进入 $AppDir 执行 npm install ..."
         Push-Location $AppDir
+        # electron 的 postinstall 会从 GitHub 下载二进制，网络不通时会无限卡在
+        # "Downloading Electron binary..."；这里跳过，交给 6.6 从镜像下载
+        $prevSkip = $env:ELECTRON_SKIP_BINARY_DOWNLOAD
+        $env:ELECTRON_SKIP_BINARY_DOWNLOAD = "1"
         try {
             & npm install
+            Assert-ExitCode "[npm] npm install"
             Write-Host "[npm] npm install 完成"
         } finally {
+            $env:ELECTRON_SKIP_BINARY_DOWNLOAD = $prevSkip
             Pop-Location
         }
     } else {
@@ -88,7 +102,7 @@ try {
 
     # ---------- 6.6 补齐 react-devtools 所需的 Electron 二进制 ----------
     # 详见 docs\React DevTools 集成与排障经验.md。electron 的 postinstall 可能未下载成功
-    # （dist\ 为空、path.txt 缺失），导致 react-devtools 无法启动。
+    # （dist\ 为空、path.txt 缺失），或卡在 "Downloading Electron binary..."，导致 react-devtools 无法启动。
     # 不用 `npm install electron --no-save`：它会装最新版 electron（与锁文件不符，
     # 且新版 install.js 在当前 Node 下报 ERR_REQUIRE_ESM）。这里按锁定版本从镜像手动下载解压。
     if (Test-Path (Join-Path $AppDir "node_modules\react-devtools")) {
@@ -107,7 +121,7 @@ try {
                 $zip  = Join-Path $env:TEMP "electron-v$ver-win32-$arch.zip"
                 $dist = Join-Path $electronDir "dist"
                 Write-Host "[electron] 二进制缺失，下载 $url ..."
-                & curl.exe -L --fail --retry 2 --connect-timeout 20 --max-time 600 -o $zip $url
+                & curl.exe -L --fail -# --retry 2 --connect-timeout 20 --max-time 600 -o $zip $url
                 if ($LASTEXITCODE -ne 0) { throw "下载失败: $url" }
                 if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
                 Expand-Archive -Path $zip -DestinationPath $dist -Force
@@ -125,24 +139,88 @@ try {
     }
 
     # ---------- 7. 初始化 Rust 工具链 ----------
-    $rustupInit = Join-Path $TOOLS_DIR "rustup-init.exe"
-    $cargoExe   = Join-Path $CARGO_BIN "cargo.exe"
+    # 工具链完全装在 sdk\ 下（RUSTUP_HOME / CARGO_HOME），不依赖系统已装的 rustup
+    $srcTauriDir = Join-Path $AppDir "src-tauri"
+    $rustupExe   = Join-Path $CARGO_BIN "rustup.exe"
+    $rustupInit  = Join-Path $TOOLS_DIR "rustup-init.exe"
 
-    if (-not (Test-Path $cargoExe)) {
-        if (-not (Test-Path $rustupInit)) {
-            throw "[rust] 未找到 $rustupInit，请把 rustup-init.exe 放到 tools\ 目录下"
+    # 从 rust-toolchain.toml 读取锁定版本，作为默认工具链
+    $rustChannel = "stable"
+    $toolchainFile = Join-Path $srcTauriDir "rust-toolchain.toml"
+    if (Test-Path $toolchainFile) {
+        $m = Select-String -Path $toolchainFile -Pattern '^\s*channel\s*=\s*"([^"]+)"' | Select-Object -First 1
+        if ($m) { $rustChannel = $m.Matches[0].Groups[1].Value }
+    }
+
+    if (-not (Test-Path $rustupExe)) {
+        # tools\rustup-init.exe 必须是真正的 rustup-init（--version 输出以 rustup-init 开头），
+        # 否则改为下载官方 rustup-init
+        if (Test-Path $rustupInit) {
+            $initVersion = ""
+            try { $initVersion = (& $rustupInit --version | Out-String) } catch { }
+            if ($initVersion -notmatch '^rustup-init ') {
+                Write-Warning "[rust] $rustupInit 不是 rustup-init，改为下载官方 rustup-init"
+                Remove-Item -Force $rustupInit
+            }
         }
-        Write-Host "[rust] 首次初始化，执行 rustup-init.exe -y --no-modify-path ..."
-        & $rustupInit -y --no-modify-path
+        if (-not (Test-Path $rustupInit)) {
+            $rustArch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+            $rustTriple = "$rustArch-pc-windows-msvc"
+            # 依次尝试官方源和国内镜像；已设置 RUSTUP_UPDATE_ROOT/RUSTUP_DIST_SERVER 时只用它。
+            # 下载成功的源同时用于本会话的工具链下载（设置 RUSTUP_DIST_SERVER）
+            if ($env:RUSTUP_UPDATE_ROOT) {
+                $distServer = if ($env:RUSTUP_DIST_SERVER) { $env:RUSTUP_DIST_SERVER } else { "https://static.rust-lang.org" }
+                $rustSources = @(@{ Dist = $distServer; Update = $env:RUSTUP_UPDATE_ROOT })
+            } else {
+                $rustSources = @(
+                    @{ Dist = "https://static.rust-lang.org";            Update = "https://static.rust-lang.org/rustup" },
+                    @{ Dist = "https://rsproxy.cn";                      Update = "https://rsproxy.cn/rustup" },
+                    @{ Dist = "https://mirrors.ustc.edu.cn/rust-static"; Update = "https://mirrors.ustc.edu.cn/rust-static/rustup" })
+            }
+            $rustupInitOk = $false
+            foreach ($src in $rustSources) {
+                $initUrl = "$($src.Update)/dist/$rustTriple/rustup-init.exe"
+                Write-Host "[rust] 下载 $initUrl ..."
+                # 低于 50KB/s 持续 20 秒视为卡住，换下一个源
+                & curl.exe -L --fail -# --retry 2 --connect-timeout 15 --speed-limit 51200 --speed-time 20 -o $rustupInit $initUrl
+                if ($LASTEXITCODE -eq 0) {
+                    $env:RUSTUP_DIST_SERVER = $src.Dist
+                    $env:RUSTUP_UPDATE_ROOT = $src.Update
+                    $rustupInitOk = $true
+                    break
+                }
+                if (Test-Path $rustupInit) { Remove-Item -Force $rustupInit }
+                Write-Warning "[rust] 从 $($src.Update) 下载失败，尝试下一个源"
+            }
+            if (-not $rustupInitOk) {
+                throw "[rust] 下载 rustup-init.exe 失败（可设置 RUSTUP_UPDATE_ROOT / RUSTUP_DIST_SERVER 指定镜像后重试）"
+            }
+            Write-Host "[rust] 使用源 $env:RUSTUP_DIST_SERVER"
+        }
+        Write-Host "[rust] 首次初始化，执行 rustup-init.exe -y --no-modify-path --default-toolchain $rustChannel ..."
+        & $rustupInit -y --no-modify-path --profile minimal --default-toolchain $rustChannel
+        Assert-ExitCode "[rust] rustup-init"
         Write-Host "[rust] 初始化完成"
     } else {
-        Write-Host "[rust] Rust 工具链已存在，跳过初始化"
+        Write-Host "[rust] rustup 已存在，跳过初始化"
     }
-    Write-Host "[rust] 当前 rustc 版本: $(& rustc --version)"
+
+    # 按 rust-toolchain.toml 补齐工具链与组件（已安装时很快返回；版本升级后也会自动跟上）
+    if (Test-Path $srcTauriDir) {
+        Push-Location $srcTauriDir
+        try {
+            & $rustupExe toolchain install
+            Assert-ExitCode "[rust] 安装 rust-toolchain.toml 指定的工具链"
+            Write-Host "[rust] 当前 rustc 版本: $(& rustc --version)"
+        } finally {
+            Pop-Location
+        }
+    } else {
+        Write-Host "[rust] 当前 rustc 版本: $(& rustc --version)"
+    }
 
     # ---------- 8. 进入 src-tauri 安装 Tauri CLI ----------
     $tauriCliExe = Join-Path $CARGO_BIN "cargo-tauri.exe"
-    $srcTauriDir = Join-Path $AppDir "src-tauri"
 
     if (-not (Test-Path $tauriCliExe)) {
         if (-not (Test-Path $srcTauriDir)) {
@@ -152,6 +230,7 @@ try {
             Push-Location $srcTauriDir
             try {
                 & cargo install tauri-cli --version "^2" --locked
+                Assert-ExitCode "[tauri] Tauri CLI 安装"
                 Write-Host "[tauri] Tauri CLI 安装完成"
             } finally {
                 Pop-Location
@@ -174,4 +253,5 @@ try {
 } finally {
     $ErrorActionPreference = $__setupEnvPrevEAP
     Remove-Variable __setupEnvPrevEAP
-}
+    Remove-Item Function:\Assert-ExitCode -ErrorAction SilentlyContinue
+}
