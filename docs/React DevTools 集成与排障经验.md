@@ -10,11 +10,11 @@
 
 1. [集成方案](#1-集成方案)
 2. [典型问题：Electron 二进制缺失](#2-典型问题electron-二进制缺失)
-3. [修复方法（Windows）](#3-修复方法windows)
+3. [修复方法](#3-修复方法)
 4. [根因分析](#4-根因分析)
 5. [验证](#5-验证)
 6. [排障速查](#6-排障速查)
-7. [macOS 补充：镜像下载卡死与手动安装](#7-macos-补充镜像下载卡死与手动安装)
+7. [手动安装（镜像下载卡死时）](#7-手动安装镜像下载卡死时)
 8. [坑：`npm install electron` 可能顺带丢失 `devtools` script](#8-坑npm-install-electron-可能顺带丢失-devtools-script)
 
 ---
@@ -63,20 +63,34 @@ react-devtools not reachable on :8097 (bridge inactive)
 
 ---
 
-## 3. 修复方法（Windows）
+## 3. 修复方法
 
-在 `app/` 目录下重装 electron 二进制：
+### 推荐：重新执行环境脚本
+
+`setup-env.ps1` / `setup-env.sh` 在「6.5 安装依赖」之后有「6.6 补齐 react-devtools 所需的 Electron 二进制」一步：
+
+1. 找到 react-devtools 实际用的那份 electron（顶层 `node_modules/electron`，或 `node_modules/react-devtools/node_modules/electron`），检查 `require('electron')` 能否解析到可执行文件；能解析就跳过。
+2. 否则按**锁文件中的版本**从 `cdn.npmmirror.com` 下载对应平台/架构的 zip，解压到 `dist/`，并写入 `path.txt`（无末尾换行）和 `dist/version`。
+
+所以在仓库根目录重新执行即可：
 
 ```powershell
-cd app
-npm install electron --no-save
+. .\setup-env.ps1
 ```
 
-说明：
+```bash
+source ./setup-env.sh
+```
 
-- `npm install electron` 会重新拉取 electron 包并触发 `postinstall` 脚本（`install.js`），从 GitHub release 下载对应平台的 Electron 二进制到 `node_modules/electron/dist/`，并写入 `path.txt`。
-- `--no-save` 让 electron 仅作为临时 dev 依赖，不写入 `package.json`（因为 `react-devtools` 已间接声明它）。
-- 下载成功后，`electron/index.js` 的校验通过，`react-devtools` 能正常启动。
+### 不要用 `npm install electron --no-save`
+
+旧版文档推荐这条命令，但它安装的是 **最新版** electron（实测装上 44.5.1，而锁文件锁定的是 23.3.13）。新版 electron 的 `install.js` 用 `require()` 加载纯 ESM 的 `@electron/get`，在项目所用的 Node 20 下直接报错：
+
+```
+Error [ERR_REQUIRE_ESM]: require() of ES Module ...\@electron\get\dist\index.js from ...\electron\install.js not supported.
+```
+
+二进制依旧缺失，而且 `node_modules` 也和锁文件不一致了。若已经执行过，在 `app/` 下运行一次 `npm install` 即可恢复锁定版本（重新安装该包时会触发 `postinstall` 下载二进制；网络不通时再走上面的环境脚本或[第 7 节](#7-手动安装镜像下载卡死时)的手动步骤）。
 
 然后重启开发服务器：
 
@@ -96,10 +110,7 @@ Electron 包的 JS 包装器（`node_modules/electron/index.js`）在运行时�
 
 之前 `node_modules/electron` 是旧版本包，其 `postinstall` 安装阶段从未成功下载平台二进制（`dist/` 为空、`path.txt` 缺失），导致运行时校验失败、下载也失败。
 
-`npm install electron` 同时完成两件事：
-
-1. 替换 `node_modules/electron` 为新版本包文件；
-2. 执行 `postinstall` 补齐 `dist/` 下的二进制与 `path.txt`。
+修复只需补齐 `dist/` 下的二进制与 `path.txt`，**保持锁文件中的 electron 版本不变**（换版本反而会引入第 3 节所述的 `ERR_REQUIRE_ESM` 问题）。
 
 核心：**不是改代码，而是补上 electron 本该在安装阶段下载却缺失的二进制文件。**
 
@@ -133,12 +144,13 @@ curl -fsS http://localhost:8097 | head -c 80   # 应返回桥接脚本内容（�
 
 | 现象 | 可能原因 | 处理 |
 |---|---|---|
-| `Electron failed to install correctly` | electron 二进制未下载 | `cd app && npm install electron --no-save` |
+| `Electron failed to install correctly` | electron 二进制未下载 | 重新执行 `setup-env.ps1` / `setup-env.sh`（见[第 3 节](#3-修复方法)） |
+| `npm install electron` 后报 `ERR_REQUIRE_ESM` | 装上了最新版 electron，其 `install.js` 与 Node 20 不兼容 | `cd app && npm install` 恢复锁定版本，再执行环境脚本 |
 | `react-devtools not reachable on :8097` | react-devtools 未启动（常因上一条） | 修复 electron 后重启 `tauri dev` |
 | DevTools 窗口弹出但无连接 | 桥接脚本未注入 | 确认 `vite.config.ts` 的 `reactDevtools()` 插件存在；检查是否被 `RDT=false` 禁用 |
 | 下载 electron 超时 | 网络问题 / GitHub 访问受限 | 设置代理后重试，或用 `ELECTRON_MIRROR` 指定镜像源 |
 | `path.txt` 存在但 `dist/` 为空 | 旧版本残留 | 删除 `node_modules/electron` 后重装 |
-| `npm install electron`/`npm rebuild electron` 长时间卡在 "Downloading Electron binary..." | 官方下载源（GitHub Releases）不可达，`ELECTRON_MIRROR` 也可能被 `@electron/get` 内部逻辑忽略 | 见 [第 7 节](#7-macos-补充镜像下载卡死与手动安装) 手动下载解压 |
+| `npm install electron`/`npm rebuild electron` 长时间卡在 "Downloading Electron binary..." | 官方下载源（GitHub Releases）不可达，`ELECTRON_MIRROR` 也可能被 `@electron/get` 内部逻辑忽略 | 见 [第 7 节](#7-手动安装镜像下载卡死时) 手动下载解压 |
 | `npm run devtools` 报 `Missing script: "devtools"` | `package.json` 的 `scripts.devtools` 被意外移除（常见于误操作或工具改写 package.json） | 见 [第 8 节](#8-坑npm-install-electron-可能顺带丢失-devtools-script) |
 
 ### 临时禁用 DevTools
@@ -156,11 +168,13 @@ RDT=false ./app/scripts/dev.sh
 
 ---
 
-## 7. macOS 补充：镜像下载卡死与手动安装
+## 7. 手动安装（镜像下载卡死时）
+
+> `setup-env.ps1` / `setup-env.sh` 的「6.6」步骤已自动化本节的手动步骤（Windows 与 macOS/Linux 通用）。本节保留原始排障记录，供脚本不可用或需要手动处理时参考。
 
 ### 现象
 
-在 macOS（Apple Silicon，`darwin arm64`）上执行：
+在 macOS（Apple Silicon，`darwin arm64`）上执行（注意：`npm install electron --no-save` 还有第 3 节所述的版本问题）：
 
 ```bash
 cd app
@@ -240,7 +254,7 @@ npm rebuild electron --foreground-scripts
 
 ### 现象
 
-按第 3/7 节修复 Electron 二进制后，再执行：
+按旧版文档用 `npm install electron --no-save` 修复 Electron 二进制后，再执行：
 
 ```bash
 npm run devtools
@@ -272,5 +286,6 @@ npm error Missing script: "devtools"
 
 ### 建议
 
+- 优先用环境脚本补齐二进制：它只往 `node_modules/electron` 里写文件，不调用 `npm install <pkg>`，不会改动 `package.json`/`package-lock.json`。
 - 每次执行 `npm install <pkg> --no-save`（尤其是为了修复二进制而非真正变更依赖）后，用 `git diff` 检查 `package.json`/`package-lock.json` 的意外改动，必要时 `git checkout -- app/package-lock.json` 还原锁文件（`--no-save` 通常不需要保留锁文件里的临时改动）。
 - 若锁文件被写入了不需要的临时改动（例如仅为了下载二进制而 `npm install electron`），修复完成后可执行 `git checkout -- app/package-lock.json` 复原，只保留 `node_modules` 里的二进制文件本身。

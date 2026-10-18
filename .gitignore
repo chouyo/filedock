@@ -70,3 +70,5 @@ coverage/
 # Misc local artifacts
 *.local
 .vite/
+/sdk
+/tools/
