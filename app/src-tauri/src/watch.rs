@@ -89,7 +89,10 @@ pub async fn start_file_watch(
                 _ = tokio::time::sleep(debounce) => {
                     match &index {
                         // Update the index first; it emits `files-changed`
-                        // for every category whose files changed.
+                        // for every category whose files changed. Level 3:
+                        // a file rewritten in place leaves its directory's
+                        // mtime alone, so level 2 would miss it. Path-level
+                        // updates replace this in the next phase.
                         Some(index) => {
                             let (app3, index, roots) =
                                 (app2.clone(), index.clone(), index.roots_for(&category));
@@ -98,6 +101,7 @@ pub async fn start_file_watch(
                                     &app3,
                                     &index,
                                     &roots,
+                                    crate::index::Level::Full,
                                     Duration::ZERO,
                                 );
                             })

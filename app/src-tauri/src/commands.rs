@@ -5,7 +5,7 @@ use tauri::{Emitter, Manager, State};
 
 use crate::config::{self, Category, Config, Session};
 use crate::file_entry::FileEntry;
-use crate::index::{self, Index, Root};
+use crate::index::{self, Index, Level, Root};
 use crate::maximize;
 use crate::scan;
 use crate::settings::{self, Settings};
@@ -145,8 +145,9 @@ pub fn reorder_categories(
 
 /// Lists a category's files. With the index, the stored list is returned
 /// at once (a root without data is indexed first) and the roots are checked
-/// against the disk in the background, emitting `files-changed` if they
-/// differ. `refresh` (manual refresh) checks them before returning instead.
+/// against the disk in the background (level 2), emitting `files-changed` if
+/// they differ. `refresh` (manual refresh) checks them fully (level 3, which
+/// also catches files rewritten in place) before returning instead.
 #[tauri::command]
 pub async fn list_files(
     app: tauri::AppHandle,
@@ -204,7 +205,7 @@ fn list_from_index(
     let warm: Vec<Root> = roots.into_iter().filter(|r| !built.contains(r)).collect();
     if refresh {
         for root in &warm {
-            index.reconcile(root, std::time::Duration::ZERO)?;
+            index.reconcile(root, Level::Full, std::time::Duration::ZERO)?;
         }
     }
     let files = index.list(category)?;

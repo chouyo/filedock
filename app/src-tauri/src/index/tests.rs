@@ -57,12 +57,22 @@ fn assert_same(index: &Index, c: &Category) {
     );
 }
 
-fn reconcile_all(index: &Index) -> bool {
+fn reconcile_at(index: &Index, level: Level) -> bool {
     let mut changed = false;
     for r in index.roots().0 {
-        changed |= index.reconcile(&r, Duration::ZERO).unwrap();
+        changed |= index.reconcile(&r, level, Duration::ZERO).unwrap();
     }
     changed
+}
+
+fn reconcile_all(index: &Index) -> bool {
+    reconcile_at(index, Level::Full)
+}
+
+fn paths(v: Vec<FileEntry>) -> Vec<String> {
+    let mut p: Vec<String> = v.into_iter().map(|e| e.path).collect();
+    p.sort();
+    p
 }
 
 fn tree(root: &Path) {
@@ -230,4 +240,92 @@ fn outdated_schema_is_rebuilt() {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
     assert_eq!(version, store::SCHEMA_VERSION);
+}
+
+#[test]
+fn level2_tracks_the_file_set_but_not_in_place_edits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    tree(&data);
+    let c = category("c", vec![target(&data, "*", true)]);
+    let index = Index::open(&tmp.path().join("index.db"), std::slice::from_ref(&c)).unwrap();
+    assert_same(&index, &c);
+    assert!(
+        !reconcile_at(&index, Level::Dirs),
+        "unchanged tree is skipped"
+    );
+
+    write(&data.join("sub/deep/new.txt"), "n");
+    fs::remove_file(data.join("a.png")).unwrap();
+    fs::rename(data.join("sub/c.png"), data.join("sub/renamed.png")).unwrap();
+    fs::remove_dir_all(data.join("other")).unwrap();
+    write(&data.join("fresh/nested/f.txt"), "f");
+    assert!(reconcile_at(&index, Level::Dirs));
+    assert_same(&index, &c);
+
+    // Rewriting content leaves the directory's mtime alone: level 2 keeps
+    // the old size, level 3 picks it up.
+    write(&data.join("notes.txt"), "much longer content");
+    assert!(!reconcile_at(&index, Level::Dirs));
+    assert_eq!(paths(index.list(&c).unwrap()), paths(scan_category(&c)));
+    assert_ne!(sorted(index.list(&c).unwrap()), sorted(scan_category(&c)));
+    assert!(reconcile_at(&index, Level::Full));
+    assert_same(&index, &c);
+}
+
+#[test]
+fn coarse_directory_times_force_a_full_check() {
+    let root = Root {
+        path: PathBuf::from("r"),
+        recursive: true,
+    };
+    let dir = |mtime| reconcile::StoredDir {
+        id: 1,
+        path: PathBuf::from("r"),
+        mtime,
+    };
+    assert!(reconcile::coarse_times(
+        &[dir(1_700_000_000_000_000_000)],
+        &root
+    ));
+    assert!(reconcile::coarse_times(
+        &[dir(1_700_000_000_010_000_000)],
+        &root
+    ));
+    assert!(!reconcile::coarse_times(
+        &[dir(1_700_000_000_123_456_789)],
+        &root
+    ));
+}
+
+/// Timing on a real directory, e.g.
+/// `FILEDOCK_INDEX_BENCH_DIR=~/FileDockBench cargo test --release --lib index_timing -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn index_timing() {
+    use std::time::Instant;
+    let Ok(dir) = std::env::var("FILEDOCK_INDEX_BENCH_DIR") else {
+        eprintln!("FILEDOCK_INDEX_BENCH_DIR not set");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let c = category("c", vec![target(Path::new(&dir), "*", true)]);
+    let index = Index::open(&tmp.path().join("index.db"), std::slice::from_ref(&c)).unwrap();
+    let t = Instant::now();
+    index.ensure_indexed(&index.roots_for(&c)).unwrap();
+    eprintln!("build:   {:>8.0} ms", t.elapsed().as_secs_f64() * 1000.0);
+    let t = Instant::now();
+    let n = index.list(&c).unwrap().len();
+    eprintln!(
+        "list:    {:>8.0} ms ({n} files)",
+        t.elapsed().as_secs_f64() * 1000.0
+    );
+    for level in [Level::Dirs, Level::Full, Level::Dirs] {
+        let t = Instant::now();
+        let changed = reconcile_at(&index, level);
+        eprintln!(
+            "{level:?}:{:>9.0} ms (changed: {changed})",
+            t.elapsed().as_secs_f64() * 1000.0
+        );
+    }
 }

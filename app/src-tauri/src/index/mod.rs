@@ -26,6 +26,7 @@ use rusqlite::Connection;
 
 use crate::config::Category;
 use crate::file_entry::FileEntry;
+pub use reconcile::Level;
 pub use sync::{Root, Roots};
 
 pub type IResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -33,8 +34,8 @@ pub type IResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 #[derive(Default)]
 struct ReconcileState {
     running: bool,
-    /// A change was reported while running; run once more before finishing.
-    rerun: bool,
+    /// Requested while running; run once more at this level before finishing.
+    rerun: Option<Level>,
     last_done: Option<Instant>,
 }
 
@@ -153,16 +154,17 @@ impl Index {
             .collect())
     }
 
-    /// Brings `root` up to date with the disk (level 3). Calls arriving
+    /// Brings `root` up to date with the disk at `level`. Calls arriving
     /// while the same root is being reconciled are folded into that run,
-    /// which repeats once; a call within `min_interval` of the last run is
-    /// skipped. Returns whether anything changed.
-    pub fn reconcile(&self, root: &Root, min_interval: Duration) -> IResult<bool> {
+    /// which repeats once at the highest level asked for; a call within
+    /// `min_interval` of the last run is skipped. Returns whether anything
+    /// changed.
+    pub fn reconcile(&self, root: &Root, level: Level, min_interval: Duration) -> IResult<bool> {
         {
             let mut map = lock(&self.reconciles);
             let st = map.entry(root.clone()).or_default();
             if st.running {
-                st.rerun = true;
+                st.rerun = st.rerun.max(Some(level));
                 return Ok(false);
             }
             if st.last_done.is_some_and(|t| t.elapsed() < min_interval) {
@@ -171,15 +173,16 @@ impl Index {
             st.running = true;
         }
         let mut changed = false;
+        let mut level = level;
         let result = loop {
-            match self.reconcile_once(root) {
+            match self.reconcile_once(root, level) {
                 Ok(c) => changed |= c,
                 Err(e) => break Err(e),
             }
             let mut map = lock(&self.reconciles);
             let st = map.entry(root.clone()).or_default();
-            if st.rerun {
-                st.rerun = false;
+            if let Some(next) = st.rerun.take() {
+                level = next;
                 continue;
             }
             break Ok(changed);
@@ -187,12 +190,12 @@ impl Index {
         let mut map = lock(&self.reconciles);
         let st = map.entry(root.clone()).or_default();
         st.running = false;
-        st.rerun = false;
+        st.rerun = None;
         st.last_done = Some(Instant::now());
         result
     }
 
-    fn reconcile_once(&self, root: &Root) -> IResult<bool> {
+    fn reconcile_once(&self, root: &Root, level: Level) -> IResult<bool> {
         let dirs = reconcile::load_dirs(&lock(&self.reader), root)?;
         if dirs.is_empty() {
             // The directory did not exist when it was indexed; build it now
@@ -207,7 +210,12 @@ impl Index {
             build::build_root(&lock(&self.writer), &roots, root)?;
             return Ok(true);
         }
-        let statuses = reconcile::scan(&dirs);
+        let level = if reconcile::coarse_times(&dirs, root) {
+            Level::Full
+        } else {
+            level
+        };
+        let statuses = reconcile::scan(&dirs, level);
         let roots = self.roots();
         reconcile::apply(&lock(&self.writer), &roots, &dirs, &statuses)
     }

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::{Index, Root};
+use super::{Index, Level, Root};
 use crate::commands::AppState;
 
 /// Re-listing a category within this window reuses the last reconcile, so
@@ -45,11 +45,12 @@ pub fn reconcile_and_notify(
     app: &AppHandle,
     index: &Index,
     roots: &[Root],
+    level: Level,
     min_interval: Duration,
 ) {
     let mut changed = HashSet::new();
     for root in roots {
-        match index.reconcile(root, min_interval) {
+        match index.reconcile(root, level, min_interval) {
             Ok(true) => {
                 changed.insert(root.clone());
             }
@@ -81,7 +82,7 @@ fn build_cold_and_notify(app: &AppHandle, index: &Index) {
 }
 
 /// After launch: drop data of removed rules, bring the stored roots up to
-/// date (level 3), then index roots that have none yet.
+/// date (level 2), then index roots that have none yet.
 pub fn spawn_startup(app: AppHandle) {
     let Some(index) = index(&app) else { return };
     tauri::async_runtime::spawn_blocking(move || {
@@ -95,17 +96,17 @@ pub fn spawn_startup(app: AppHandle) {
             .into_iter()
             .filter(|r| !cold.contains(r))
             .collect();
-        reconcile_and_notify(&app, &index, &warm, Duration::ZERO);
+        reconcile_and_notify(&app, &index, &warm, Level::Dirs, Duration::ZERO);
         build_cold_and_notify(&app, &index);
     });
 }
 
 /// After a category's list was served from the index: check those roots in
-/// the background.
+/// the background (level 2).
 pub fn spawn_refresh(app: AppHandle, roots: Vec<Root>) {
     let Some(index) = index(&app) else { return };
     tauri::async_runtime::spawn_blocking(move || {
-        reconcile_and_notify(&app, &index, &roots, REFRESH_INTERVAL);
+        reconcile_and_notify(&app, &index, &roots, Level::Dirs, REFRESH_INTERVAL);
     });
 }
 
