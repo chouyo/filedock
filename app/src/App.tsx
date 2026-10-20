@@ -38,7 +38,9 @@ export function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [config, setConfig] = useState<Config | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [files, setFiles] = useState<FileEntry[]>([]);
+  // Bumped to make the file table refetch its visible rows.
+  const [reloadToken, setReloadToken] = useState(0);
+  // A manual refresh (full rescan) is running.
   const [inFlight, setInFlight] = useState(false);
   const [categorySearch, setCategorySearch] = useState('');
   const [windowVisible, setWindowVisible] = useState(true);
@@ -52,13 +54,8 @@ export function App() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: FileEntry } | null>(null);
 
-  const loadIdRef = useRef(0);
-  const spinnerLoadIdRef = useRef(0);
-  const loadingRef = useRef(false);
-  const refreshPendingRef = useRef(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastCategoryClickRef = useRef<{ id: string; time: number }>({ id: '', time: 0 });
-  const selectLoadedRef = useRef<string | null>(null);
   const fileSearchRef = useRef<HTMLInputElement>(null);
   const categoryDropRef = useRef<HTMLDivElement>(null);
 
@@ -164,80 +161,16 @@ export function App() {
     return () => window.removeEventListener('contextmenu', handler);
   }, []);
 
-  // ---- Load files when active category changes ----
-  // Only the latest load's result is applied. A silent load may supersede a
-  // visible one, so the spinner is tracked by the latest visible load.
-  // `rescan` makes the backend check the disk before answering (manual
-  // refresh); otherwise it answers from the index and checks afterwards.
-  const loadFiles = useCallback((categoryId: string, silent = false, rescan = false) => {
-    const currentLoadId = ++loadIdRef.current;
-    const startTime = Date.now();
-    loadingRef.current = true;
-    if (!silent) {
-      // A fresh scan covers any change a pending refresh was waiting for.
-      refreshPendingRef.current = false;
-      spinnerLoadIdRef.current = currentLoadId;
-      setInFlight(true);
-    }
-    invoke<FileEntry[]>('list_files', { categoryId, refresh: rescan })
-      .then((result) => {
-        if (currentLoadId === loadIdRef.current) setFiles(result);
-      })
-      .catch(() => {
-        if (currentLoadId === loadIdRef.current) setFiles([]);
-      })
-      .finally(() => {
-        if (!silent && currentLoadId === spinnerLoadIdRef.current) {
-          const elapsed = Date.now() - startTime;
-          const minDuration = 200;
-          if (elapsed >= minDuration) {
-            setInFlight(false);
-          } else {
-            setTimeout(() => {
-              if (currentLoadId === spinnerLoadIdRef.current) setInFlight(false);
-            }, minDuration - elapsed);
-          }
-        }
-        if (currentLoadId !== loadIdRef.current) return;
-        loadingRef.current = false;
-        if (refreshPendingRef.current) {
-          refreshPendingRef.current = false;
-          loadFiles(categoryId, true);
-        }
-      });
-  }, []);
-
-  // Silent refresh for file-change events and similar triggers. While a
-  // scan is running, further requests only mark one follow-up scan, so a
-  // burst of events cannot queue up scans that are all thrown away.
-  const refreshFiles = useCallback(
-    (categoryId: string) => {
-      if (loadingRef.current) {
-        refreshPendingRef.current = true;
-        return;
-      }
-      loadFiles(categoryId, true);
-    },
-    [loadFiles],
-  );
-
-  useEffect(() => {
-    if (!activeCategoryId) {
-      setFiles([]);
-      return;
-    }
-    if (selectLoadedRef.current === activeCategoryId) {
-      selectLoadedRef.current = null;
-      return;
-    }
-    loadFiles(activeCategoryId);
-  }, [activeCategoryId, loadFiles]);
+  // ---- File list reloads ----
+  // The table fetches the rows it shows from the index; a reload only makes
+  // it fetch them again, so bursts of reloads are cheap.
+  const refreshFiles = useCallback(() => setReloadToken((n) => n + 1), []);
 
   // ---- Auto refresh on file-change events ----
   useEffect(() => {
     const unlisten = listen<string>('files-changed', (e) => {
       if (windowVisible && activeCategoryId && e.payload === activeCategoryId) {
-        refreshFiles(activeCategoryId);
+        refreshFiles();
       }
     });
     return () => {
@@ -250,7 +183,7 @@ export function App() {
   useEffect(() => {
     if (prevVisibleRef.current === false && windowVisible === true) {
       if (activeCategoryId && settings?.autoRefreshEnabled) {
-        refreshFiles(activeCategoryId);
+        refreshFiles();
       }
     }
     prevVisibleRef.current = windowVisible;
@@ -314,14 +247,17 @@ export function App() {
     }
     lastCategoryClickRef.current = { id, time: now };
 
-    selectLoadedRef.current = id;
+    // Clicking the open category reloads it.
+    if (id === activeCategoryId) {
+      refreshFiles();
+      return;
+    }
     setConfig((prev) =>
       prev ? { ...prev, session: { ...prev.session, activeCategoryId: id } } : prev,
     );
     if (config) {
       invoke('save_session', { session: { ...config.session, activeCategoryId: id } });
     }
-    loadFiles(id);
   };
 
   const handleCategorySaved = async () => {
@@ -337,7 +273,7 @@ export function App() {
     // file list immediately (silently, so the manual refresh button stays
     // usable). The backend watcher follows the new rules on its own.
     if (editingCategory && editingCategory.id === activeCategoryId) {
-      refreshFiles(activeCategoryId);
+      refreshFiles();
     }
   };
 
@@ -408,10 +344,18 @@ export function App() {
     handleSearchChange('');
   };
 
+  // Checks the disk fully before reloading, unlike the automatic reloads,
+  // which trust the index.
   const handleManualRefresh = useCallback(() => {
-    if (!activeCategoryId) return;
-    loadFiles(activeCategoryId, false, true);
-  }, [activeCategoryId, loadFiles]);
+    if (!activeCategoryId || inFlight) return;
+    setInFlight(true);
+    invoke('rescan_category', { categoryId: activeCategoryId })
+      .catch(() => {})
+      .finally(() => {
+        setInFlight(false);
+        refreshFiles();
+      });
+  }, [activeCategoryId, inFlight, refreshFiles]);
 
   // ---- Close / Quit handlers ----
   const handleCloseConfirm = async (action: 'close' | 'minimize', remember: boolean) => {
@@ -493,7 +437,7 @@ export function App() {
           {activeCategoryId ? (
             <FileTable
               categoryId={activeCategoryId}
-              files={files}
+              reloadToken={reloadToken}
               columns={columns}
               lang={lang}
               searchText={searchText}
@@ -502,6 +446,7 @@ export function App() {
               onSearchChange={handleSearchChange}
               onClearSearch={handleClearSearch}
               onRefresh={handleManualRefresh}
+              onReload={refreshFiles}
               onToggleColumn={handleToggleColumn}
               onContextMenu={handleFileContextMenu}
               searchInputRef={fileSearchRef}

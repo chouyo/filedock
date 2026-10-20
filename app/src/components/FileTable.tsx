@@ -1,9 +1,10 @@
-import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { useI18n } from '../i18n/useI18n';
 import { cn } from '../lib/utils';
 import { ALL_COLUMNS, FLEX_COLUMN_MIN_WIDTH, getColumnDef, type ColumnDef } from '../lib/columns';
 import { useVirtualRows } from '../lib/useVirtualRows';
+import { usePagedFiles } from '../lib/usePagedFiles';
 import { FileRow, FILE_ROW_HEIGHT } from './FileRow';
 import { Tooltip } from './Tooltip';
 import { SearchInput } from './SearchInput';
@@ -12,14 +13,16 @@ import type { FileEntry, ColumnKey, Language } from '../types';
 /** Width in px of the trailing column that holds the column settings button. */
 const SETTINGS_COLUMN_WIDTH = 40;
 
-// Same ordering as String.prototype.localeCompare, without building a
-// collator on every comparison.
-const collator = new Intl.Collator();
+/** Typing pause before the search is sent to the backend. */
+const SEARCH_DEBOUNCE_MS = 150;
+/** Loading overlay only for loads slower than this, so fast ones do not flash. */
+const OVERLAY_DELAY_MS = 200;
 
 interface FileTableProps {
   /** Scroll resets to the top when this changes (the active category). */
   categoryId: string;
-  files: FileEntry[];
+  /** Bumped to refetch the visible rows (file changes, manual refresh). */
+  reloadToken: number;
   columns: ColumnKey[];
   lang: Language;
   searchText: string;
@@ -28,6 +31,8 @@ interface FileTableProps {
   onSearchChange: (text: string) => void;
   onClearSearch: () => void;
   onRefresh: () => void;
+  /** Refetches the visible rows from the index (no rescan). */
+  onReload: () => void;
   onToggleColumn: (key: string) => void;
   onContextMenu: (x: number, y: number, file: FileEntry) => void;
   searchInputRef?: React.RefObject<HTMLInputElement>;
@@ -35,7 +40,7 @@ interface FileTableProps {
 
 export function FileTable({
   categoryId,
-  files,
+  reloadToken,
   columns,
   lang,
   searchText,
@@ -44,6 +49,7 @@ export function FileTable({
   onSearchChange,
   onClearSearch,
   onRefresh,
+  onReload,
   onToggleColumn,
   onContextMenu,
   searchInputRef,
@@ -55,9 +61,13 @@ export function FileTable({
   const columnSettingsRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Filtering runs on the deferred value so typing stays responsive; the
-  // input itself is bound to `searchText`.
-  const deferredSearchText = useDeferredValue(searchText);
+  // The input is bound to `searchText`; queries follow after a pause.
+  const [debouncedSearch, setDebouncedSearch] = useState(searchText);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchText), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchText]);
+  const query = debouncedSearch.trim();
 
   const columnDefs = useMemo(
     () => columns.map(getColumnDef).filter((d): d is ColumnDef => !!d),
@@ -70,40 +80,42 @@ export function FileTable({
     [columnDefs],
   );
 
-  const sortedFiles = useMemo(() => {
-    if (!sortCol) return files;
-    const sorted = [...files];
-    sorted.sort((a, b) => {
-      let cmp = 0;
-      const va = (a as unknown as Record<string, unknown>)[sortCol];
-      const vb = (b as unknown as Record<string, unknown>)[sortCol];
-      if (typeof va === 'number' && typeof vb === 'number') {
-        cmp = va - vb;
-      } else {
-        cmp = collator.compare(String(va ?? ''), String(vb ?? ''));
-      }
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-    return sorted;
-  }, [files, sortCol, sortDir]);
-
-  const filteredFiles = useMemo(() => {
-    if (!deferredSearchText) return sortedFiles;
-    const q = deferredSearchText.toLowerCase();
-    return sortedFiles.filter((f) => f.name.toLowerCase().includes(q));
-  }, [sortedFiles, deferredSearchText]);
-
+  // The row count comes from the backend, which needs the visible range:
+  // the range is computed from the last known count.
+  const [count, setCount] = useState(0);
   const { start, end, paddingTop, paddingBottom } = useVirtualRows({
-    count: filteredFiles.length,
+    count,
     rowHeight: FILE_ROW_HEIGHT,
     scrollRef,
   });
 
-  // A different category, query or ordering starts from the top. Auto
-  // refreshes only replace `files`, so they keep the scroll position.
+  const { total, rowAt, loading } = usePagedFiles({
+    categoryId,
+    search: query,
+    sortCol,
+    sortDesc: sortDir === 'desc',
+    reloadToken,
+    start,
+    end,
+    onRetry: onReload,
+  });
+  useEffect(() => setCount(total ?? 0), [total]);
+
+  const [showOverlay, setShowOverlay] = useState(false);
+  useEffect(() => {
+    if (!loading && !inFlight) {
+      setShowOverlay(false);
+      return;
+    }
+    const timer = setTimeout(() => setShowOverlay(true), OVERLAY_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [loading, inFlight]);
+
+  // A different category, query or ordering starts from the top. Reloads
+  // keep the scroll position.
   useLayoutEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
-  }, [categoryId, deferredSearchText, sortCol, sortDir]);
+  }, [categoryId, query, sortCol, sortDir]);
 
   const handleSort = (key: ColumnKey) => {
     if (sortCol === key) {
@@ -161,7 +173,7 @@ export function FileTable({
         <table
           className="w-full table-fixed"
           style={{ minWidth: tableMinWidth }}
-          aria-rowcount={filteredFiles.length + 1}
+          aria-rowcount={count + 1}
           onContextMenu={(e) => e.preventDefault()}
         >
           <colgroup>
@@ -230,16 +242,28 @@ export function FileTable({
                 <td colSpan={columnDefs.length + 1} className="p-0" />
               </tr>
             )}
-            {filteredFiles.slice(start, end).map((file, i) => (
-              <FileRow
-                key={file.path}
-                file={file}
-                columns={columnDefs}
-                lang={lang}
-                rowIndex={start + i + 2}
-                onContextMenu={onContextMenu}
-              />
-            ))}
+            {Array.from({ length: end - start }, (_, i) => {
+              const file = rowAt(start + i);
+              return file ? (
+                <FileRow
+                  key={file.path}
+                  file={file}
+                  columns={columnDefs}
+                  lang={lang}
+                  rowIndex={start + i + 2}
+                  onContextMenu={onContextMenu}
+                />
+              ) : (
+                // Not fetched yet.
+                <tr
+                  key={`pending-${start + i}`}
+                  aria-rowindex={start + i + 2}
+                  style={{ height: FILE_ROW_HEIGHT }}
+                >
+                  <td colSpan={columnDefs.length + 1} className="p-0" />
+                </tr>
+              );
+            })}
             {paddingBottom > 0 && (
               <tr aria-hidden="true" style={{ height: paddingBottom }}>
                 <td colSpan={columnDefs.length + 1} className="p-0" />
@@ -247,13 +271,13 @@ export function FileTable({
             )}
           </tbody>
         </table>
-        {filteredFiles.length === 0 && (
+        {total === 0 && (
           <div className="flex items-center justify-center py-12 text-ink-secondary text-sm">
             {t('files.noResults')}
           </div>
         )}
 
-        {inFlight && (
+        {showOverlay && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 backdrop-blur-sm">
             <div className="flex flex-col items-center gap-3">
               <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin" />
@@ -264,7 +288,7 @@ export function FileTable({
       </div>
 
       <div className="flex items-center gap-2 px-3 py-1 border-t border-divider shrink-0 text-xs text-ink-secondary">
-        <span>{t('files.count', { count: filteredFiles.length })}</span>
+        <span>{t('files.count', { count })}</span>
         <div className="flex-1" />
         {watchActive && (
           <Tooltip content={t('status.watching')} placement="top">

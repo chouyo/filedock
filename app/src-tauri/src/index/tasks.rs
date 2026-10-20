@@ -13,10 +13,6 @@ use tauri::{AppHandle, Emitter, Manager};
 use super::{normalize_dir, Change, Index, Level, Root};
 use crate::commands::AppState;
 
-/// Re-listing a category within this window reuses the last reconcile, so
-/// the reload that `files-changed` triggers does not start another one.
-pub const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
-
 fn index(app: &AppHandle) -> Option<Arc<Index>> {
     app.state::<AppState>().index.clone()
 }
@@ -123,15 +119,6 @@ pub fn spawn_startup(app: AppHandle) {
             .collect();
         reconcile_and_notify(&app, &index, &warm, Level::Dirs, Duration::ZERO);
         build_cold_and_notify(&app, &index);
-    });
-}
-
-/// After a category's list was served from the index: check those roots in
-/// the background (level 2).
-pub fn spawn_refresh(app: AppHandle, roots: Vec<Root>) {
-    let Some(index) = index(&app) else { return };
-    tauri::async_runtime::spawn_blocking(move || {
-        reconcile_and_notify(&app, &index, &roots, Level::Dirs, REFRESH_INTERVAL);
     });
 }
 

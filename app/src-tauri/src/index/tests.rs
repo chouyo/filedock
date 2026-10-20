@@ -399,6 +399,25 @@ fn index_timing() {
         "list:    {:>8.0} ms ({n} files)",
         t.elapsed().as_secs_f64() * 1000.0
     );
+    let cache = crate::pages::PageCache::default();
+    for (search, col, offset) in [("", "createdAt", 0), ("", "createdAt", 100_000), ("", "name", 0), ("a", "size", 0)] {
+        let q = crate::pages::FileQuery {
+            category_id: "c".into(),
+            search: search.into(),
+            sort_col: col.into(),
+            sort_desc: false,
+            offset,
+            limit: 200,
+            reload: 0,
+        };
+        let t = Instant::now();
+        let page = crate::pages::query(Some(&index), &cache, &c, &q).unwrap();
+        eprintln!(
+            "page {col} search={search:?} offset={offset}: {:>6.0} ms (total {})",
+            t.elapsed().as_secs_f64() * 1000.0,
+            page.total
+        );
+    }
     for level in [Level::Dirs, Level::Full, Level::Dirs] {
         let t = Instant::now();
         let changed = reconcile_at(&index, level);

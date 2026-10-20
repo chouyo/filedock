@@ -6,6 +6,7 @@ mod matcher;
 mod maximize;
 #[cfg(target_os = "macos")]
 mod menu;
+mod pages;
 mod scan;
 mod settings;
 mod tray;
@@ -49,11 +50,11 @@ pub fn run() {
                 }
             };
             AppState {
-                scan_locks: Mutex::new(std::collections::HashMap::new()),
                 config: Mutex::new(config),
                 settings: Mutex::new(settings::load_settings_file()),
                 file_watch: Mutex::new(None),
                 index,
+                pages: pages::PageCache::default(),
             }
         })
         .setup(|app| {
@@ -118,7 +119,8 @@ pub fn run() {
             commands::save_category,
             commands::delete_category,
             commands::reorder_categories,
-            commands::list_files,
+            commands::query_files,
+            commands::rescan_category,
             commands::save_session,
             commands::save_settings,
             commands::open_in_explorer,

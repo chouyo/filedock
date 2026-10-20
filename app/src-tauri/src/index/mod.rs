@@ -12,7 +12,7 @@
 
 mod build;
 mod live;
-mod query;
+pub mod query;
 mod reconcile;
 mod store;
 mod sync;
@@ -20,6 +20,7 @@ pub mod tasks;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -47,6 +48,9 @@ pub struct Index {
     reader: Mutex<Connection>,
     roots: Mutex<Roots>,
     reconciles: Mutex<HashMap<Root, ReconcileState>>,
+    /// Bumped after every write that may change what a category lists, so
+    /// cached query results can tell they are stale.
+    generation: AtomicU64,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -64,6 +68,7 @@ impl Index {
             reader: Mutex::new(reader),
             roots: Mutex::new(Roots::from_categories(categories)),
             reconciles: Mutex::new(HashMap::new()),
+            generation: AtomicU64::new(0),
         })
     }
 
@@ -126,6 +131,7 @@ impl Index {
                 .execute(rusqlite::params![store::path_s(&r.path), r.recursive])?;
         }
         tx.commit()?;
+        self.bump();
         Ok(())
     }
 
@@ -142,6 +148,9 @@ impl Index {
             }
             build::build_root(&conn, &roots, root)?;
             built.push(root.clone());
+        }
+        if !built.is_empty() {
+            self.bump();
         }
         Ok(built)
     }
@@ -211,6 +220,7 @@ impl Index {
                 return Ok(false);
             }
             build::build_root(&lock(&self.writer), &roots, root)?;
+            self.bump();
             return Ok(true);
         }
         let level = if reconcile::coarse_times(&dirs, root) {
@@ -220,7 +230,11 @@ impl Index {
         };
         let statuses = reconcile::scan(&dirs, level);
         let roots = self.roots();
-        reconcile::apply(&lock(&self.writer), &roots, &dirs, &statuses)
+        let changed = reconcile::apply(&lock(&self.writer), &roots, &dirs, &statuses)?;
+        if changed {
+            self.bump();
+        }
+        Ok(changed)
     }
 
     /// Applies changes reported by the file watcher for `paths` (any order,
@@ -240,13 +254,41 @@ impl Index {
             return Ok(HashSet::new());
         }
         let states = live::probe(&paths);
-        live::apply(&lock(&self.writer), &roots, &paths, &states)
+        let changes = live::apply(&lock(&self.writer), &roots, &paths, &states)?;
+        if !changes.is_empty() {
+            self.bump();
+        }
+        Ok(changes)
     }
 
-    /// Lists a category from the index. The caller makes sure its roots are
-    /// indexed first.
+    fn bump(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Changes whenever a listing may have changed. Read it before
+    /// `items`, so a write racing the read makes the result look stale
+    /// rather than current.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    /// Calls `f` for every file `category` lists. The caller makes sure its
+    /// roots are indexed first.
+    pub fn visit(&self, category: &Category, f: impl FnMut(&query::RowRef<'_>)) -> IResult<()> {
+        query::visit(&lock(&self.reader), category, f)
+    }
+
+    /// The files with these ids, in the same order.
+    pub fn rows(&self, ids: &[i64]) -> IResult<Vec<FileEntry>> {
+        query::rows(&lock(&self.reader), ids)
+    }
+
+    /// Every file `category` lists, as `scan.rs` would return it.
+    #[cfg(test)]
     pub fn list(&self, category: &Category) -> IResult<Vec<FileEntry>> {
-        query::list_category(&lock(&self.reader), category)
+        let mut out = Vec::new();
+        self.visit(category, |r| out.push(r.to_entry()))?;
+        Ok(out)
     }
 }
 

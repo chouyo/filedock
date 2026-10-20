@@ -1,6 +1,7 @@
-//! Listing a category from the index, with the same result as `scan.rs`.
+//! Reading a category's files from the index, with the same result as
+//! `scan.rs`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use rusqlite::{params_from_iter, Connection};
@@ -37,8 +38,27 @@ fn simple_extensions(target: &TargetRule) -> Option<Vec<String>> {
     }
 }
 
-pub fn list_category(conn: &Connection, category: &Category) -> IResult<Vec<FileEntry>> {
-    let mut set: HashMap<String, FileEntry> = HashMap::new();
+/// One matching file as read from the database; borrowed, so visiting
+/// millions of rows allocates nothing per row.
+pub struct RowRef<'a> {
+    pub id: i64,
+    pub dir: &'a str,
+    pub name: &'a str,
+    pub size: i64,
+    pub created: i64,
+    pub modified: i64,
+    pub accessed: i64,
+    pub readonly: bool,
+}
+
+/// Calls `f` for every file `category` lists, each once.
+pub fn visit(
+    conn: &Connection,
+    category: &Category,
+    mut f: impl FnMut(&RowRef<'_>),
+) -> IResult<()> {
+    // Only overlapping targets can yield a file twice.
+    let mut seen: Option<HashSet<i64>> = (category.targets.len() > 1).then(HashSet::new);
 
     for target in &category.targets {
         let dir = normalize_dir(&target.dir);
@@ -70,37 +90,108 @@ pub fn list_category(conn: &Connection, category: &Category) -> IResult<Vec<File
             params.extend(exts);
         }
         let sql = format!(
-            "SELECT d.path, f.name, f.size, f.created, f.modified, f.accessed, f.readonly
+            "SELECT f.id, d.path, f.name, f.size, f.created, f.modified, f.accessed, f.readonly
              FROM files f JOIN dirs d ON d.id = f.dir_id WHERE {sql}"
         );
 
         let mut stmt = conn.prepare_cached(&sql)?;
         let mut rows = stmt.query(params_from_iter(params.iter()))?;
         while let Some(row) = rows.next()? {
-            let name: String = row.get(1)?;
-            if !matcher.matches(&name) {
+            let name = row.get_ref(2)?.as_str()?;
+            if !matcher.matches(name) {
                 continue;
             }
-            let parent_dir: String = row.get(0)?;
-            let path = Path::new(&parent_dir).join(&name);
-            let extension = path
-                .extension()
-                .map(|e| e.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let fe = FileEntry {
-                path: path_s(&path),
+            let id: i64 = row.get(0)?;
+            if let Some(seen) = seen.as_mut() {
+                if !seen.insert(id) {
+                    continue;
+                }
+            }
+            f(&RowRef {
+                id,
+                dir: row.get_ref(1)?.as_str()?,
                 name,
-                extension,
-                parent_dir,
-                size: row.get::<_, i64>(2)? as u64,
-                created_at: row.get(3)?,
-                modified_at: row.get(4)?,
-                accessed_at: row.get(5)?,
-                is_readonly: row.get(6)?,
-            };
-            set.insert(fe.path.clone(), fe);
+                size: row.get(3)?,
+                created: row.get(4)?,
+                modified: row.get(5)?,
+                accessed: row.get(6)?,
+                readonly: row.get(7)?,
+            });
         }
     }
+    Ok(())
+}
 
-    Ok(set.into_values().collect())
+#[allow(clippy::too_many_arguments)]
+fn entry(
+    parent_dir: String,
+    name: String,
+    size: i64,
+    created_at: i64,
+    modified_at: i64,
+    accessed_at: i64,
+    is_readonly: bool,
+) -> FileEntry {
+    let path = Path::new(&parent_dir).join(&name);
+    let extension = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_string())
+        .unwrap_or_default();
+    FileEntry {
+        path: path_s(&path),
+        name,
+        extension,
+        parent_dir,
+        size: size as u64,
+        created_at,
+        modified_at,
+        accessed_at,
+        is_readonly,
+    }
+}
+
+impl RowRef<'_> {
+    #[cfg(test)]
+    pub fn to_entry(&self) -> FileEntry {
+        entry(
+            self.dir.to_string(),
+            self.name.to_string(),
+            self.size,
+            self.created,
+            self.modified,
+            self.accessed,
+            self.readonly,
+        )
+    }
+}
+
+/// The files with these ids, in the same order; ids no longer stored are
+/// skipped.
+pub fn rows(conn: &Connection, ids: &[i64]) -> IResult<Vec<FileEntry>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = format!(
+        "SELECT f.id, d.path, f.name, f.size, f.created, f.modified, f.accessed, f.readonly
+         FROM files f JOIN dirs d ON d.id = f.dir_id WHERE f.id IN ({})",
+        vec!["?"; ids.len()].join(",")
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params_from_iter(ids.iter()))?;
+    let mut by_id: HashMap<i64, FileEntry> = HashMap::with_capacity(ids.len());
+    while let Some(row) = rows.next()? {
+        by_id.insert(
+            row.get(0)?,
+            entry(
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+            ),
+        );
+    }
+    Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
 }

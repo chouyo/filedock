@@ -1,26 +1,24 @@
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager, State};
 
 use crate::config::{self, Category, Config, Session};
-use crate::file_entry::FileEntry;
-use crate::index::{self, Index, Level, Root};
+use crate::index::{self, Index, Level};
 use crate::maximize;
-use crate::scan;
+use crate::pages::{self, FilePage, FileQuery};
 use crate::settings::{self, Settings};
 use crate::util;
 use crate::watch;
 use crate::window_state;
 
 pub struct AppState {
-    pub scan_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     pub config: Mutex<Config>,
     pub settings: Mutex<Settings>,
     pub file_watch: Mutex<Option<watch::FileWatch>>,
     /// `None` when the index could not be opened; listing then falls back to
     /// walking the directories on every call.
     pub index: Option<Arc<Index>>,
+    pub pages: pages::PageCache,
 }
 
 #[tauri::command]
@@ -143,76 +141,64 @@ pub fn reorder_categories(
     Ok(categories)
 }
 
-/// Lists a category's files. With the index, the stored list is returned
-/// at once (a root without data is indexed first) and the roots are checked
-/// against the disk in the background (level 2), emitting `files-changed` if
-/// they differ. `refresh` (manual refresh) checks them fully (level 3, which
-/// also catches files rewritten in place) before returning instead.
-#[tauri::command]
-pub async fn list_files(
-    app: tauri::AppHandle,
-    category_id: String,
-    refresh: Option<bool>,
-    state: State<'_, AppState>,
-) -> Result<Vec<FileEntry>, String> {
-    let lock = {
-        let mut map = state.scan_locks.lock().unwrap();
-        map.entry(category_id.clone())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
-    };
-    let _guard = lock.lock().await;
-
-    // Clone the category and release the config lock before scanning. Sync
-    // commands such as `save_session` run on the main thread and take this
-    // lock, so holding it for the whole scan would freeze the window.
-    let category = {
-        let cfg = state.config.lock().unwrap();
-        cfg.categories
-            .iter()
-            .find(|c| c.id == category_id)
-            .cloned()
-            .ok_or_else(|| "category not found".to_string())?
-    };
-
-    let index = state.index.clone();
-    let refresh = refresh.unwrap_or(false);
-    tauri::async_runtime::spawn_blocking(move || match index {
-        Some(index) => match list_from_index(&app, &index, &category, refresh) {
-            Ok(files) => files,
-            Err(e) => {
-                eprintln!(
-                    "index: listing {} failed, scanning instead: {e}",
-                    category.id
-                );
-                scan::scan_category(&category)
-            }
-        },
-        None => scan::scan_category(&category),
-    })
-    .await
-    .map_err(|e| e.to_string())
+fn find_category(state: &State<'_, AppState>, id: &str) -> Result<Category, String> {
+    // Clone the category and release the config lock before touching the
+    // disk. Sync commands such as `save_session` run on the main thread and
+    // take this lock, so holding it longer would freeze the window.
+    let cfg = state.config.lock().unwrap();
+    cfg.categories
+        .iter()
+        .find(|c| c.id == id)
+        .cloned()
+        .ok_or_else(|| "category not found".to_string())
 }
 
-fn list_from_index(
-    app: &tauri::AppHandle,
-    index: &Index,
-    category: &Category,
-    refresh: bool,
-) -> index::IResult<Vec<FileEntry>> {
-    let roots = index.roots_for(category);
-    let built = index.ensure_indexed(&roots)?;
-    let warm: Vec<Root> = roots.into_iter().filter(|r| !built.contains(r)).collect();
-    if refresh {
-        for root in &warm {
+/// One page of a category's files, filtered by name and sorted. Answered
+/// from the index (roots without data are indexed first); the watcher keeps
+/// it current.
+#[tauri::command]
+pub async fn query_files(
+    app: tauri::AppHandle,
+    query: FileQuery,
+    state: State<'_, AppState>,
+) -> Result<FilePage, String> {
+    let category = find_category(&state, &query.category_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let index = state.index.as_deref();
+        if let Some(index) = index {
+            if let Err(e) = index.ensure_indexed(&index.roots_for(&category)) {
+                eprintln!("index: building roots of {} failed: {e}", category.id);
+            }
+        }
+        pages::query(index, &state.pages, &category, &query)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Manual refresh: checks the category's directories fully (level 3, which
+/// also catches files rewritten in place) before the frontend reloads.
+#[tauri::command]
+pub async fn rescan_category(
+    category_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let category = find_category(&state, &category_id)?;
+    let Some(index) = state.index.clone() else {
+        return Ok(());
+    };
+    tauri::async_runtime::spawn_blocking(move || -> index::IResult<()> {
+        let roots = index.roots_for(&category);
+        let built = index.ensure_indexed(&roots)?;
+        for root in roots.iter().filter(|r| !built.contains(r)) {
             index.reconcile(root, Level::Full, std::time::Duration::ZERO)?;
         }
-    }
-    let files = index.list(category)?;
-    if !refresh && !warm.is_empty() {
-        index::tasks::spawn_refresh(app.clone(), warm);
-    }
-    Ok(files)
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

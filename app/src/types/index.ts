@@ -76,6 +76,20 @@ export interface FileEntry {
   isReadonly: boolean;
 }
 
+/** One page of a category's files (`query_files`). */
+export interface FilePage {
+  /** Rows the whole query matches. */
+  total: number;
+  offset: number;
+  rows: FileEntry[];
+  /**
+   * Set when the rows come from a result older than the index (very large
+   * categories are not re-sorted on every change): fetch again after this
+   * many milliseconds.
+   */
+  retryAfterMs?: number;
+}
+
 export interface UpdateInfo {
   version: string;
   notes: string;
