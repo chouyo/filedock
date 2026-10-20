@@ -168,7 +168,9 @@ export function App() {
   // ---- Load files when active category changes ----
   // Only the latest load's result is applied. A silent load may supersede a
   // visible one, so the spinner is tracked by the latest visible load.
-  const loadFiles = useCallback((categoryId: string, silent = false) => {
+  // `rescan` makes the backend check the disk before answering (manual
+  // refresh); otherwise it answers from the index and checks afterwards.
+  const loadFiles = useCallback((categoryId: string, silent = false, rescan = false) => {
     const currentLoadId = ++loadIdRef.current;
     const startTime = Date.now();
     loadingRef.current = true;
@@ -178,7 +180,7 @@ export function App() {
       spinnerLoadIdRef.current = currentLoadId;
       setInFlight(true);
     }
-    invoke<FileEntry[]>('list_files', { categoryId })
+    invoke<FileEntry[]>('list_files', { categoryId, refresh: rescan })
       .then((result) => {
         if (currentLoadId === loadIdRef.current) setFiles(result);
       })
@@ -429,7 +431,7 @@ export function App() {
 
   const handleManualRefresh = useCallback(() => {
     if (!activeCategoryId) return;
-    loadFiles(activeCategoryId);
+    loadFiles(activeCategoryId, false, true);
     setRefreshNonce((n) => n + 1);
   }, [activeCategoryId, loadFiles]);
 

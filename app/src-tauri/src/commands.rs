@@ -5,6 +5,7 @@ use tauri::{Emitter, Manager, State};
 
 use crate::config::{self, Category, Config, Session};
 use crate::file_entry::FileEntry;
+use crate::index::{self, Index, Root};
 use crate::maximize;
 use crate::scan;
 use crate::settings::{self, Settings};
@@ -17,6 +18,9 @@ pub struct AppState {
     pub config: Mutex<Config>,
     pub settings: Mutex<Settings>,
     pub file_watch: tokio::sync::Mutex<Option<watch::FileWatch>>,
+    /// `None` when the index could not be opened; listing then falls back to
+    /// walking the directories on every call.
+    pub index: Option<Arc<Index>>,
 }
 
 #[tauri::command]
@@ -44,8 +48,18 @@ pub fn list_categories(state: State<'_, AppState>) -> Result<Vec<Category>, Stri
 
 #[tauri::command]
 pub fn save_category(
+    app: tauri::AppHandle,
     category: Category,
     state: State<'_, AppState>,
+) -> Result<Vec<Category>, String> {
+    let categories = save_category_inner(category, &state)?;
+    index::tasks::spawn_config_changed(app);
+    Ok(categories)
+}
+
+fn save_category_inner(
+    category: Category,
+    state: &State<'_, AppState>,
 ) -> Result<Vec<Category>, String> {
     let mut cfg = state.config.lock().unwrap();
     let now = util::now_millis();
@@ -90,16 +104,24 @@ pub fn save_category(
 }
 
 #[tauri::command]
-pub fn delete_category(id: String, state: State<'_, AppState>) -> Result<Vec<Category>, String> {
-    let mut cfg = state.config.lock().unwrap();
-    cfg.categories.retain(|c| c.id != id);
-    for (i, c) in cfg.categories.iter_mut().enumerate() {
-        c.order = i as i64;
-    }
-    config::save_config_file(&cfg)?;
+pub fn delete_category(
+    app: tauri::AppHandle,
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<Category>, String> {
+    let categories = {
+        let mut cfg = state.config.lock().unwrap();
+        cfg.categories.retain(|c| c.id != id);
+        for (i, c) in cfg.categories.iter_mut().enumerate() {
+            c.order = i as i64;
+        }
+        config::save_config_file(&cfg)?;
 
-    let mut categories = cfg.categories.clone();
-    categories.sort_by_key(|c| c.order);
+        let mut categories = cfg.categories.clone();
+        categories.sort_by_key(|c| c.order);
+        categories
+    };
+    index::tasks::spawn_config_changed(app);
     Ok(categories)
 }
 
@@ -121,9 +143,15 @@ pub fn reorder_categories(
     Ok(categories)
 }
 
+/// Lists a category's files. With the index, the stored list is returned
+/// at once (a root without data is indexed first) and the roots are checked
+/// against the disk in the background, emitting `files-changed` if they
+/// differ. `refresh` (manual refresh) checks them before returning instead.
 #[tauri::command]
 pub async fn list_files(
+    app: tauri::AppHandle,
     category_id: String,
+    refresh: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<Vec<FileEntry>, String> {
     let lock = {
@@ -146,9 +174,44 @@ pub async fn list_files(
             .ok_or_else(|| "category not found".to_string())?
     };
 
-    tauri::async_runtime::spawn_blocking(move || scan::scan_category(&category))
-        .await
-        .map_err(|e| e.to_string())
+    let index = state.index.clone();
+    let refresh = refresh.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || match index {
+        Some(index) => match list_from_index(&app, &index, &category, refresh) {
+            Ok(files) => files,
+            Err(e) => {
+                eprintln!(
+                    "index: listing {} failed, scanning instead: {e}",
+                    category.id
+                );
+                scan::scan_category(&category)
+            }
+        },
+        None => scan::scan_category(&category),
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+fn list_from_index(
+    app: &tauri::AppHandle,
+    index: &Index,
+    category: &Category,
+    refresh: bool,
+) -> index::IResult<Vec<FileEntry>> {
+    let roots = index.roots_for(category);
+    let built = index.ensure_indexed(&roots)?;
+    let warm: Vec<Root> = roots.into_iter().filter(|r| !built.contains(r)).collect();
+    if refresh {
+        for root in &warm {
+            index.reconcile(root, std::time::Duration::ZERO)?;
+        }
+    }
+    let files = index.list(category)?;
+    if !refresh && !warm.is_empty() {
+        index::tasks::spawn_refresh(app.clone(), warm);
+    }
+    Ok(files)
 }
 
 #[tauri::command]

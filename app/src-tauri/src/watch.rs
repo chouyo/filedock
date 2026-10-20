@@ -66,6 +66,7 @@ pub async fn start_file_watch(
 
     let app2 = app.clone();
     let cat = category_id.clone();
+    let index = state.index.clone();
     let debounce = Duration::from_millis(debounce_ms.max(100));
     let join = tokio::spawn(async move {
         let mut rx = rx;
@@ -86,7 +87,26 @@ pub async fn start_file_watch(
                     last = Some(Instant::now());
                 }
                 _ = tokio::time::sleep(debounce) => {
-                    let _ = app2.emit("files-changed", &cat);
+                    match &index {
+                        // Update the index first; it emits `files-changed`
+                        // for every category whose files changed.
+                        Some(index) => {
+                            let (app3, index, roots) =
+                                (app2.clone(), index.clone(), index.roots_for(&category));
+                            let _ = tokio::task::spawn_blocking(move || {
+                                crate::index::tasks::reconcile_and_notify(
+                                    &app3,
+                                    &index,
+                                    &roots,
+                                    Duration::ZERO,
+                                );
+                            })
+                            .await;
+                        }
+                        None => {
+                            let _ = app2.emit("files-changed", &cat);
+                        }
+                    }
                     last = None;
                 }
             }

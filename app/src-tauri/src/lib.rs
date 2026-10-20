@@ -1,6 +1,7 @@
 mod commands;
 mod config;
 mod file_entry;
+mod index;
 mod matcher;
 mod maximize;
 #[cfg(target_os = "macos")]
@@ -37,11 +38,23 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(AppState {
-            scan_locks: Mutex::new(std::collections::HashMap::new()),
-            config: Mutex::new(config::load_config_file()),
-            settings: Mutex::new(settings::load_settings_file()),
-            file_watch: tokio::sync::Mutex::new(None),
+        .manage({
+            let config = config::load_config_file();
+            let index = match index::Index::open(&index::Index::default_path(), &config.categories)
+            {
+                Ok(i) => Some(std::sync::Arc::new(i)),
+                Err(e) => {
+                    eprintln!("index: cannot open, listing will walk directories: {e}");
+                    None
+                }
+            };
+            AppState {
+                scan_locks: Mutex::new(std::collections::HashMap::new()),
+                config: Mutex::new(config),
+                settings: Mutex::new(settings::load_settings_file()),
+                file_watch: tokio::sync::Mutex::new(None),
+                index,
+            }
         })
         .setup(|app| {
             config::init_config_file()?;
@@ -63,6 +76,8 @@ pub fn run() {
             window_state::install_window_state_listener(app.handle());
 
             tray::setup_tray(app)?;
+
+            index::tasks::spawn_startup(app.handle().clone());
 
             let app_handle = app.handle().clone();
             window.on_window_event(move |event| {
@@ -95,7 +110,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-
             commands::load_config,
             commands::load_settings,
             commands::save_window_state,

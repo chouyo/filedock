@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "FileDock - Windows desktop file management application"
 authors = ["FileDock"]
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.88"
 
 [lib]
 name = "filedock_lib"
@@ -29,6 +29,11 @@ regex = "1"
 uuid = { version = "1", features = ["v4"] }
 notify = "6"
 tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+# Persistent file index (src/index). rusqlite must stay on the same major as
+# seekr's (dev-dependency below): two bundled SQLite copies cannot link together.
+rusqlite = { version = "0.40", features = ["bundled"] }
+ignore = "0.4"
+rayon = "1"
 
 # Versions must match the ones wry/tauri resolve to (see Cargo.lock).
 [target.'cfg(windows)'.dependencies]
@@ -47,11 +52,8 @@ objc2-web-kit = { version = "0.3", default-features = false, features = ["std", 
 # See examples/README.md.
 [dev-dependencies]
 seekr = { git = "https://github.com/muhammad-fiaz/seekr.git", rev = "f11bc11f15f256163d41f188dac49ceaf4a445f7" }
-# Must stay on the same major as seekr's: two bundled SQLite copies cannot link together.
-rusqlite = { version = "0.40", features = ["bundled"] }
 chrono = "0.4"
-ignore = "0.4"
-rayon = "1"
+tempfile = "3"
 clap = { version = "4", features = ["derive"] }
 
 [target.'cfg(unix)'.dev-dependencies]
