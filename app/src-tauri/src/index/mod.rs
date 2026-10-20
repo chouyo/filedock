@@ -11,6 +11,7 @@
 //! write). Disk access for reconciliation happens outside both locks.
 
 mod build;
+mod live;
 mod query;
 mod reconcile;
 mod store;
@@ -26,7 +27,9 @@ use rusqlite::Connection;
 
 use crate::config::Category;
 use crate::file_entry::FileEntry;
+pub use live::Change;
 pub use reconcile::Level;
+pub use store::normalize_dir;
 pub use sync::{Root, Roots};
 
 pub type IResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -218,6 +221,26 @@ impl Index {
         let statuses = reconcile::scan(&dirs, level);
         let roots = self.roots();
         reconcile::apply(&lock(&self.writer), &roots, &dirs, &statuses)
+    }
+
+    /// Applies changes reported by the file watcher for `paths` (any order,
+    /// duplicates allowed). Returns what changed.
+    pub fn apply_paths(&self, paths: &HashSet<PathBuf>) -> IResult<HashSet<Change>> {
+        let roots = self.roots();
+        // Parents before children, so a re-created tree is inserted top-down.
+        let mut paths: Vec<PathBuf> = paths
+            .iter()
+            .filter(|p| {
+                p.parent().is_some_and(|parent| roots.tracks_dir(parent)) || roots.tracks_dir(p)
+            })
+            .cloned()
+            .collect();
+        paths.sort();
+        if paths.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let states = live::probe(&paths);
+        live::apply(&lock(&self.writer), &roots, &paths, &states)
     }
 
     /// Lists a category from the index. The caller makes sure its roots are

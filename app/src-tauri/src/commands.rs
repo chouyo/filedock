@@ -17,7 +17,7 @@ pub struct AppState {
     pub scan_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     pub config: Mutex<Config>,
     pub settings: Mutex<Settings>,
-    pub file_watch: tokio::sync::Mutex<Option<watch::FileWatch>>,
+    pub file_watch: Mutex<Option<watch::FileWatch>>,
     /// `None` when the index could not be opened; listing then falls back to
     /// walking the directories on every call.
     pub index: Option<Arc<Index>>,

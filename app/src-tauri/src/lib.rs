@@ -52,7 +52,7 @@ pub fn run() {
                 scan_locks: Mutex::new(std::collections::HashMap::new()),
                 config: Mutex::new(config),
                 settings: Mutex::new(settings::load_settings_file()),
-                file_watch: tokio::sync::Mutex::new(None),
+                file_watch: Mutex::new(None),
                 index,
             }
         })
@@ -78,6 +78,7 @@ pub fn run() {
             tray::setup_tray(app)?;
 
             index::tasks::spawn_startup(app.handle().clone());
+            watch::start(app.handle());
 
             let app_handle = app.handle().clone();
             window.on_window_event(move |event| {
@@ -131,8 +132,6 @@ pub fn run() {
             commands::minimize_main_window,
             commands::toggle_maximize_main_window,
             commands::close_main_window,
-            watch::start_file_watch,
-            watch::stop_file_watch,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

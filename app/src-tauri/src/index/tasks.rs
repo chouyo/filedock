@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::{Index, Level, Root};
+use super::{normalize_dir, Change, Index, Level, Root};
 use crate::commands::AppState;
 
 /// Re-listing a category within this window reuses the last reconcile, so
@@ -35,6 +35,31 @@ fn notify(app: &AppHandle, index: &Index, roots: &HashSet<Root>) {
         .clone();
     for c in &categories {
         if index.roots_for(c).iter().any(|r| roots.contains(r)) {
+            let _ = app.emit("files-changed", &c.id);
+        }
+    }
+}
+
+/// Emits `files-changed` for every category with a target that `changes`
+/// touch (every category when `all`).
+pub fn notify_changes(app: &AppHandle, changes: &HashSet<Change>, all: bool) {
+    if changes.is_empty() && !all {
+        return;
+    }
+    let categories = app
+        .state::<AppState>()
+        .config
+        .lock()
+        .unwrap()
+        .categories
+        .clone();
+    for c in &categories {
+        let hit = all
+            || c.targets.iter().any(|t| {
+                let dir = normalize_dir(&t.dir);
+                changes.iter().any(|ch| ch.affects(&dir, t.recursive))
+            });
+        if hit {
             let _ = app.emit("files-changed", &c.id);
         }
     }
@@ -110,8 +135,13 @@ pub fn spawn_refresh(app: AppHandle, roots: Vec<Root>) {
     });
 }
 
-/// After categories were saved, deleted or reordered.
+/// After categories were saved or deleted: watch the new roots, drop data
+/// of removed ones and index new ones.
 pub fn spawn_config_changed(app: AppHandle) {
+    {
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || crate::watch::sync_roots(&app));
+    }
     let Some(index) = index(&app) else { return };
     let categories = app
         .state::<AppState>()

@@ -42,7 +42,6 @@ export function App() {
   const [inFlight, setInFlight] = useState(false);
   const [categorySearch, setCategorySearch] = useState('');
   const [windowVisible, setWindowVisible] = useState(true);
-  const [refreshNonce, setRefreshNonce] = useState(0);
 
   const [showSettings, setShowSettings] = useState(false);
   const [showCloseDialog, setShowCloseDialog] = useState(false);
@@ -246,25 +245,6 @@ export function App() {
     };
   }, [activeCategoryId, windowVisible, refreshFiles]);
 
-  // ---- File-change watcher lifecycle (auto refresh) ----
-  useEffect(() => {
-    if (!settings?.autoRefreshEnabled || !activeCategoryId || !windowVisible) return;
-    const id = activeCategoryId;
-    invoke('start_file_watch', {
-      categoryId: id,
-      debounceMs: settings.watchDebounceMs,
-    }).catch(() => {});
-    return () => {
-      invoke('stop_file_watch').catch(() => {});
-    };
-  }, [
-    activeCategoryId,
-    settings?.autoRefreshEnabled,
-    settings?.watchDebounceMs,
-    windowVisible,
-    refreshNonce,
-  ]);
-
   // ---- Actively refresh once when the window returns to visible ----
   const prevVisibleRef = useRef(true);
   useEffect(() => {
@@ -355,10 +335,9 @@ export function App() {
     }
     // If the active category's monitoring rules were edited, refresh the
     // file list immediately (silently, so the manual refresh button stays
-    // usable) and restart the watcher so the new rules take effect.
+    // usable). The backend watcher follows the new rules on its own.
     if (editingCategory && editingCategory.id === activeCategoryId) {
       refreshFiles(activeCategoryId);
-      setRefreshNonce((n) => n + 1);
     }
   };
 
@@ -432,7 +411,6 @@ export function App() {
   const handleManualRefresh = useCallback(() => {
     if (!activeCategoryId) return;
     loadFiles(activeCategoryId, false, true);
-    setRefreshNonce((n) => n + 1);
   }, [activeCategoryId, loadFiles]);
 
   // ---- Close / Quit handlers ----

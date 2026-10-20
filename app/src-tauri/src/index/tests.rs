@@ -1,6 +1,7 @@
 //! The index must list exactly what `scan.rs` finds, before and after
 //! changes on disk and to the rules.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -296,6 +297,84 @@ fn coarse_directory_times_force_a_full_check() {
         &[dir(1_700_000_000_123_456_789)],
         &root
     ));
+}
+
+fn set(paths: &[PathBuf]) -> HashSet<PathBuf> {
+    paths.iter().cloned().collect()
+}
+
+#[test]
+fn watcher_events_are_applied_path_by_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    tree(&data);
+    let all = category("all", vec![target(&data, "*", true)]);
+    let top = category("top", vec![target(&data, "*", false)]);
+    let deep = category("deep", vec![target(&data.join("sub/deep"), "*", true)]);
+    let cats = vec![all.clone(), top.clone(), deep.clone()];
+    let index = Index::open(&tmp.path().join("index.db"), &cats).unwrap();
+    for c in &cats {
+        assert_same(&index, c);
+    }
+    let check = |changes: &HashSet<Change>| {
+        for c in &cats {
+            assert_same(&index, c);
+        }
+        let hit = |c: &Category| {
+            c.targets.iter().any(|t| {
+                changes
+                    .iter()
+                    .any(|ch| ch.affects(&normalize_dir(&t.dir), t.recursive))
+            })
+        };
+        (hit(&all), hit(&top), hit(&deep))
+    };
+
+    // New file and in-place edit at the top level.
+    write(&data.join("new.txt"), "n");
+    write(&data.join("notes.txt"), "rewritten in place");
+    let ch = index
+        .apply_paths(&set(&[data.join("new.txt"), data.join("notes.txt")]))
+        .unwrap();
+    assert_eq!(check(&ch), (true, true, false));
+
+    // Rename inside a nested directory: both paths are reported.
+    fs::rename(data.join("sub/deep/d.jpg"), data.join("sub/deep/d2.jpg")).unwrap();
+    let ch = index
+        .apply_paths(&set(&[
+            data.join("sub/deep/d.jpg"),
+            data.join("sub/deep/d2.jpg"),
+        ]))
+        .unwrap();
+    assert_eq!(check(&ch), (true, false, true));
+
+    // A directory moved in with content: only the directory is reported.
+    let outside = tmp.path().join("outside");
+    write(&outside.join("x/y.txt"), "y");
+    fs::rename(&outside, data.join("moved")).unwrap();
+    let ch = index.apply_paths(&set(&[data.join("moved")])).unwrap();
+    assert_eq!(check(&ch), (true, false, false));
+
+    // The parent of the watched `deep` target removed.
+    fs::remove_dir_all(data.join("sub")).unwrap();
+    let ch = index.apply_paths(&set(&[data.join("sub")])).unwrap();
+    assert_eq!(check(&ch), (true, false, true));
+
+    // A file replaced by a directory of the same name.
+    fs::remove_file(data.join("new.txt")).unwrap();
+    write(&data.join("new.txt/inner.txt"), "i");
+    let ch = index.apply_paths(&set(&[data.join("new.txt")])).unwrap();
+    assert_eq!(check(&ch), (true, true, false));
+
+    // Paths outside every root, and events for unchanged files, change nothing.
+    write(&tmp.path().join("elsewhere.txt"), "e");
+    let ch = index
+        .apply_paths(&set(&[
+            tmp.path().join("elsewhere.txt"),
+            data.join("B.PNG"),
+        ]))
+        .unwrap();
+    assert!(ch.is_empty());
 }
 
 /// Timing on a real directory, e.g.
