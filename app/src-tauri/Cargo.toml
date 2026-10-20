@@ -47,6 +47,9 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSScreen", "NSView", "NSWindow"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSGeometry", "NSString"] }
 objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKContentWorld", "WKFrameInfo", "WKWebView"] }
+# FSEvents history replay for the file index (src/index/fsevents.rs). Same
+# version notify uses.
+fsevent-sys = "4"
 
 # Search benchmark examples (examples/bench_*); never linked into the app.
 # See examples/README.md.

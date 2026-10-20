@@ -14,8 +14,9 @@ use rusqlite::Connection;
 use super::IResult;
 use crate::util::system_time_to_millis;
 
-/// Bump on any schema change; an index with another version is rebuilt.
-pub const SCHEMA_VERSION: i64 = 1;
+/// Bump on any schema change; an index with an unknown version is rebuilt,
+/// older known versions are migrated (see `MIGRATIONS`).
+pub const SCHEMA_VERSION: i64 = 2;
 
 const PRAGMAS: &str = "PRAGMA journal_mode = WAL;
      PRAGMA synchronous = NORMAL;
@@ -29,6 +30,11 @@ const SCHEMA: &str = "CREATE TABLE roots (
          recursive INTEGER NOT NULL,
          indexed_at INTEGER NOT NULL,
          walk_errors INTEGER NOT NULL DEFAULT 0,
+         -- Platform change journal position up to which this root's data is
+         -- known to be current (macOS: FSEvents event id; journal_id is the
+         -- volume's event database UUID). NULL until the watcher saves one.
+         journal_id TEXT,
+         checkpoint INTEGER,
          PRIMARY KEY (path, recursive)
      );
      CREATE TABLE dirs (
@@ -53,6 +59,10 @@ const SCHEMA: &str = "CREATE TABLE roots (
      CREATE UNIQUE INDEX files_dir_name ON files(dir_id, name);
      CREATE INDEX files_ext ON files(ext);";
 
+/// `MIGRATIONS[i]` upgrades version `i + 1` to `i + 2`.
+const MIGRATIONS: &[&str] = &["ALTER TABLE roots ADD COLUMN journal_id TEXT;
+     ALTER TABLE roots ADD COLUMN checkpoint INTEGER;"];
+
 fn connect(path: &Path) -> IResult<Connection> {
     let conn = Connection::open(path)?;
     conn.execute_batch(PRAGMAS)?;
@@ -65,6 +75,13 @@ fn try_open_writer(path: &Path) -> IResult<Connection> {
     if version == 0 {
         let tx = conn.unchecked_transaction()?;
         tx.execute_batch(SCHEMA)?;
+        tx.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))?;
+        tx.commit()?;
+    } else if (1..SCHEMA_VERSION).contains(&version) {
+        let tx = conn.unchecked_transaction()?;
+        for m in &MIGRATIONS[(version - 1) as usize..] {
+            tx.execute_batch(m)?;
+        }
         tx.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))?;
         tx.commit()?;
     } else if version != SCHEMA_VERSION {

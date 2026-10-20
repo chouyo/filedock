@@ -7,7 +7,7 @@
 //! overflow, FSEvents "must rescan"), the affected roots are reconciled at
 //! level 2 instead.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
@@ -24,10 +24,14 @@ const MAX_EXTRA_DELAY: Duration = Duration::from_secs(2);
 /// How often roots that could not be watched (missing directory, no
 /// permission) are tried again.
 const RETRY_INTERVAL: Duration = Duration::from_secs(30);
+/// How often the change journal position is saved (macOS).
+#[cfg(target_os = "macos")]
+const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(30);
 
 pub struct FileWatch {
     watcher: RecommendedWatcher,
-    watched: HashSet<Root>,
+    /// Watched roots and since when.
+    watched: HashMap<Root, Instant>,
 }
 
 enum Msg {
@@ -74,7 +78,7 @@ pub fn start(app: &AppHandle) {
     };
     *app.state::<AppState>().file_watch.lock().unwrap() = Some(FileWatch {
         watcher,
-        watched: HashSet::new(),
+        watched: HashMap::new(),
     });
     sync_roots(app);
 
@@ -99,13 +103,18 @@ pub fn sync_roots(app: &AppHandle) {
     };
     let mut guard = state.file_watch.lock().unwrap();
     let Some(fw) = guard.as_mut() else { return };
-    let gone: Vec<Root> = fw.watched.difference(&wanted).cloned().collect();
+    let gone: Vec<Root> = fw
+        .watched
+        .keys()
+        .filter(|r| !wanted.contains(*r))
+        .cloned()
+        .collect();
     for root in gone {
         let _ = fw.watcher.unwatch(&root.path);
         fw.watched.remove(&root);
     }
     for root in wanted {
-        if fw.watched.contains(&root) || !root.path.is_dir() {
+        if fw.watched.contains_key(&root) || !root.path.is_dir() {
             continue;
         }
         let mode = if root.recursive {
@@ -114,7 +123,7 @@ pub fn sync_roots(app: &AppHandle) {
             RecursiveMode::NonRecursive
         };
         if fw.watcher.watch(&root.path, mode).is_ok() {
-            fw.watched.insert(root);
+            fw.watched.insert(root, Instant::now());
         }
     }
 }
@@ -132,6 +141,8 @@ fn run(app: AppHandle, rx: Receiver<Msg>) {
     // First and latest event of the pending batch.
     let mut pending: Option<(Instant, Instant)> = None;
     let mut last_retry = Instant::now();
+    #[cfg(target_os = "macos")]
+    let mut checkpoint = Checkpoint::default();
 
     loop {
         let debounce = Duration::from_millis(
@@ -181,6 +192,60 @@ fn run(app: AppHandle, rx: Receiver<Msg>) {
             }
             None => {}
         }
+
+        #[cfg(target_os = "macos")]
+        checkpoint.tick(&app);
+    }
+}
+
+/// Saves FSEvents positions for the next start's replay.
+///
+/// A position is saved one interval after it was read: by then every event
+/// before it has been delivered and applied (batches wait at most the
+/// debounce plus `MAX_EXTRA_DELAY`, far less than the interval). Only roots
+/// watched since before the position was read get it. Replaying a little
+/// too much is harmless, since applying a path is idempotent.
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+struct Checkpoint {
+    /// When the pending position was read, and the position.
+    pending: Option<(Instant, u64)>,
+    last: Option<Instant>,
+}
+
+#[cfg(target_os = "macos")]
+impl Checkpoint {
+    fn tick(&mut self, app: &AppHandle) {
+        if self.last.is_some_and(|t| t.elapsed() < CHECKPOINT_INTERVAL) {
+            return;
+        }
+        self.last = Some(Instant::now());
+        let state = app.state::<AppState>();
+        let Some(index) = state.index.clone() else { return };
+        if !index.caught_up() {
+            self.pending = None;
+            return;
+        }
+        let read = (Instant::now(), index::fsevents::current_event_id());
+        if let Some((read_at, id)) = self.pending.replace(read) {
+            let roots: Vec<Root> = match state.file_watch.lock().unwrap().as_ref() {
+                Some(fw) => fw
+                    .watched
+                    .iter()
+                    .filter(|(_, since)| **since <= read_at)
+                    .map(|(r, _)| r.clone())
+                    .collect(),
+                None => return,
+            };
+            for root in roots {
+                let Some(journal) = index::fsevents::journal_id(&root.path) else {
+                    continue;
+                };
+                if let Err(e) = index.set_checkpoint(&root, &journal, id) {
+                    eprintln!("watch: saving checkpoint failed: {e}");
+                }
+            }
+        }
     }
 }
 
@@ -203,7 +268,8 @@ fn flush(app: &AppHandle, paths: HashSet<PathBuf>, rescan: HashSet<PathBuf>, res
         return;
     };
 
-    let mut rescan = rescan;
+    let paths = index.to_root_paths(paths);
+    let mut rescan = index.to_root_paths(rescan);
     match index.apply_paths(&paths) {
         Ok(c) => changes.extend(c),
         Err(e) => {

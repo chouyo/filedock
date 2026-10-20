@@ -377,6 +377,76 @@ fn watcher_events_are_applied_path_by_path() {
     assert!(ch.is_empty());
 }
 
+#[test]
+fn v1_index_is_migrated_in_place() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join("index.db");
+    {
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE roots (path TEXT NOT NULL, recursive INTEGER NOT NULL,
+                 indexed_at INTEGER NOT NULL, walk_errors INTEGER NOT NULL DEFAULT 0,
+                 PRIMARY KEY (path, recursive));
+             CREATE TABLE dirs (id INTEGER PRIMARY KEY, path TEXT NOT NULL, parent_id INTEGER,
+                 mtime INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE files (id INTEGER PRIMARY KEY, dir_id INTEGER NOT NULL, name TEXT NOT NULL,
+                 ext TEXT NOT NULL, size INTEGER NOT NULL, created INTEGER NOT NULL,
+                 modified INTEGER NOT NULL, accessed INTEGER NOT NULL, readonly INTEGER NOT NULL);
+             INSERT INTO roots VALUES ('/kept', 1, 1, 0);
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+    }
+    let index = Index::open(&db, &[]).unwrap();
+    let conn = lock(&index.reader);
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+    assert_eq!(version, store::SCHEMA_VERSION);
+    let kept: (String, Option<i64>) = conn
+        .query_row("SELECT path, checkpoint FROM roots", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+    assert_eq!(kept, ("/kept".to_string(), None));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn fsevents_replay_catches_offline_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    tree(&data);
+    let c = category("c", vec![target(&data, "*", true)]);
+    let index = Index::open(&tmp.path().join("index.db"), std::slice::from_ref(&c)).unwrap();
+    assert_same(&index, &c);
+    let roots = index.roots().0;
+
+    // Without a checkpoint the history cannot be used.
+    let (_, rest) = index.replay_journal(&roots).unwrap();
+    assert_eq!(rest, roots);
+
+    // A checkpoint from another event database is not trusted either.
+    let since = fsevents::current_event_id();
+    index.set_checkpoint(&roots[0], "00000000-0000-0000-0000-000000000000", since).unwrap();
+    let (_, rest) = index.replay_journal(&roots).unwrap();
+    assert_eq!(rest, roots);
+
+    let journal = fsevents::journal_id(&data).expect("temp volume keeps FSEvents history");
+    index.set_checkpoint(&roots[0], &journal, since).unwrap();
+
+    // Changes made "while the app was closed".
+    write(&data.join("new.txt"), "n");
+    fs::remove_file(data.join("a.png")).unwrap();
+    fs::rename(data.join("sub/c.png"), data.join("sub/c2.png")).unwrap();
+    write(&data.join("notes.txt"), "rewritten in place, which level 2 misses");
+    write(&data.join("fresh/nested/f.txt"), "f");
+    fs::remove_dir_all(data.join("other")).unwrap();
+    // fseventsd records events asynchronously.
+    std::thread::sleep(Duration::from_millis(1500));
+
+    let (changes, rest) = index.replay_journal(&roots).unwrap();
+    assert!(rest.is_empty(), "history covers the root");
+    assert!(!changes.is_empty());
+    assert_same(&index, &c);
+}
+
 /// Timing on a real directory, e.g.
 /// `FILEDOCK_INDEX_BENCH_DIR=~/FileDockBench cargo test --release --lib index_timing -- --ignored --nocapture`
 #[test]

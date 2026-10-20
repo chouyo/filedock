@@ -11,6 +11,8 @@
 //! write). Disk access for reconciliation happens outside both locks.
 
 mod build;
+#[cfg(target_os = "macos")]
+pub mod fsevents;
 mod live;
 pub mod query;
 mod reconcile;
@@ -20,7 +22,7 @@ pub mod tasks;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -51,6 +53,10 @@ pub struct Index {
     /// Bumped after every write that may change what a category lists, so
     /// cached query results can tell they are stale.
     generation: AtomicU64,
+    /// Set once the startup catch-up (journal replay or reconcile) is done;
+    /// before that the index may not reflect changes made while the app was
+    /// not running, so no journal checkpoint may be saved.
+    caught_up: AtomicBool,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -69,6 +75,7 @@ impl Index {
             roots: Mutex::new(Roots::from_categories(categories)),
             reconciles: Mutex::new(HashMap::new()),
             generation: AtomicU64::new(0),
+            caught_up: AtomicBool::new(false),
         })
     }
 
@@ -237,6 +244,32 @@ impl Index {
         Ok(changed)
     }
 
+    /// Rewrites paths reported by the system under a root's real location
+    /// (symlinks resolved, e.g. `/private/var` for `/var`) to the configured
+    /// spelling the index uses. Other paths are returned unchanged.
+    pub fn to_root_paths(&self, paths: impl IntoIterator<Item = PathBuf>) -> HashSet<PathBuf> {
+        let aliases: Vec<(PathBuf, PathBuf)> = self
+            .roots()
+            .0
+            .into_iter()
+            .filter_map(|r| {
+                let real = std::fs::canonicalize(&r.path).ok()?;
+                (real != r.path).then_some((real, r.path))
+            })
+            .collect();
+        paths
+            .into_iter()
+            .map(|p| {
+                for (real, configured) in &aliases {
+                    if let Ok(rest) = p.strip_prefix(real) {
+                        return configured.join(rest);
+                    }
+                }
+                p
+            })
+            .collect()
+    }
+
     /// Applies changes reported by the file watcher for `paths` (any order,
     /// duplicates allowed). Returns what changed.
     pub fn apply_paths(&self, paths: &HashSet<PathBuf>) -> IResult<HashSet<Change>> {
@@ -259,6 +292,92 @@ impl Index {
             self.bump();
         }
         Ok(changes)
+    }
+
+    pub fn set_caught_up(&self) {
+        self.caught_up.store(true, Ordering::SeqCst);
+    }
+
+    pub fn caught_up(&self) -> bool {
+        self.caught_up.load(Ordering::SeqCst)
+    }
+
+    /// Level 1 catch-up from the FSEvents history: applies what changed
+    /// under `roots` since their saved checkpoints. Returns the changes and
+    /// the roots the history cannot vouch for (no or foreign checkpoint, lost
+    /// events, history incomplete), which need a reconcile instead.
+    #[cfg(target_os = "macos")]
+    pub fn replay_journal(&self, roots: &[Root]) -> IResult<(HashSet<Change>, Vec<Root>)> {
+        let saved = self.checkpoints()?;
+        let mut usable: Vec<(Root, u64)> = Vec::new();
+        let mut rest: Vec<Root> = Vec::new();
+        for root in roots {
+            match saved.get(root) {
+                Some((jid, cp)) if fsevents::journal_id(&root.path).as_deref() == Some(jid) => {
+                    usable.push((root.clone(), *cp))
+                }
+                _ => rest.push(root.clone()),
+            }
+        }
+        let Some(since) = usable.iter().map(|(_, cp)| *cp).min() else {
+            return Ok((HashSet::new(), rest));
+        };
+        let dirs: Vec<PathBuf> = usable.iter().map(|(r, _)| r.path.clone()).collect();
+        let mut replay = fsevents::replay(&dirs, since, Duration::from_secs(60), 200_000);
+        replay.paths = self.to_root_paths(std::mem::take(&mut replay.paths));
+        replay.lost = self.to_root_paths(std::mem::take(&mut replay.lost)).into_iter().collect();
+        if !replay.complete {
+            rest.extend(usable.into_iter().map(|(r, _)| r));
+            return Ok((HashSet::new(), rest));
+        }
+        for (root, _) in usable {
+            if replay
+                .lost
+                .iter()
+                .any(|p| p.starts_with(&root.path) || root.path.starts_with(p))
+            {
+                rest.push(root);
+            }
+        }
+        let changes = self.apply_paths(&replay.paths)?;
+        Ok((changes, rest))
+    }
+
+    /// Change journal positions saved for indexed roots: `(journal id,
+    /// checkpoint)`.
+    pub fn checkpoints(&self) -> IResult<HashMap<Root, (String, u64)>> {
+        let conn = lock(&self.reader);
+        let mut stmt = conn.prepare_cached(
+            "SELECT path, recursive, journal_id, checkpoint FROM roots
+             WHERE journal_id IS NOT NULL AND checkpoint IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                Root {
+                    path: PathBuf::from(r.get::<_, String>(0)?),
+                    recursive: r.get(1)?,
+                },
+                (r.get::<_, String>(2)?, r.get::<_, i64>(3)? as u64),
+            ))
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Records that `root`'s data reflects every change up to `checkpoint`
+    /// of journal `journal_id`. Ignored for roots not indexed (yet).
+    pub fn set_checkpoint(&self, root: &Root, journal_id: &str, checkpoint: u64) -> IResult<()> {
+        lock(&self.writer)
+            .prepare_cached(
+                "UPDATE roots SET journal_id = ?3, checkpoint = ?4
+                 WHERE path = ?1 AND recursive = ?2",
+            )?
+            .execute(rusqlite::params![
+                store::path_s(&root.path),
+                root.recursive,
+                journal_id,
+                checkpoint as i64
+            ])?;
+        Ok(())
     }
 
     fn bump(&self) {

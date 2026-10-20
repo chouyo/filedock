@@ -103,7 +103,8 @@ fn build_cold_and_notify(app: &AppHandle, index: &Index) {
 }
 
 /// After launch: drop data of removed rules, bring the stored roots up to
-/// date (level 2), then index roots that have none yet.
+/// date (FSEvents replay on macOS, else level 2), then index roots that
+/// have none yet.
 pub fn spawn_startup(app: AppHandle) {
     let Some(index) = index(&app) else { return };
     tauri::async_runtime::spawn_blocking(move || {
@@ -111,14 +112,24 @@ pub fn spawn_startup(app: AppHandle) {
             eprintln!("index: garbage collection failed: {e}");
         }
         let cold: HashSet<Root> = index.cold_roots().unwrap_or_default().into_iter().collect();
-        let warm: Vec<Root> = index
+        let mut warm: Vec<Root> = index
             .roots()
             .0
             .into_iter()
             .filter(|r| !cold.contains(r))
             .collect();
+        // Level 1 where the change journal covers a root, level 2 otherwise.
+        #[cfg(target_os = "macos")]
+        match index.replay_journal(&warm) {
+            Ok((changes, rest)) => {
+                notify_changes(&app, &changes, false);
+                warm = rest;
+            }
+            Err(e) => eprintln!("index: FSEvents replay failed: {e}"),
+        }
         reconcile_and_notify(&app, &index, &warm, Level::Dirs, Duration::ZERO);
         build_cold_and_notify(&app, &index);
+        index.set_caught_up();
     });
 }
 
